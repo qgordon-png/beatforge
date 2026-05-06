@@ -1,4 +1,4 @@
-name: Build BeatForge Windows Installer
+name: Build & Release BeatForge
 
 on:
   push:
@@ -7,7 +7,8 @@ on:
 
 jobs:
   build-windows:
-    runs-on: windows-2025-vs2026
+    runs-on: windows-latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -19,15 +20,12 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Generate lock file
-        run: npm install --package-lock-only
-
-      - name: Build Windows installer
-        run: npm run build
+      - name: Build & publish Windows installer
+        run: npm run build -- --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload installer artifact
+      - name: Upload installer artifact (backup)
         uses: actions/upload-artifact@v4
         with:
           name: BeatForge-Windows-Installer

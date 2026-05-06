@@ -1664,3 +1664,52 @@ function exportCCCheatSheet(sections, layers, bpm, key) {
   URL.revokeObjectURL(url);
 }
 
+
+// ═══════════════════════════════════════════════
+// AUTO-UPDATER UI
+// Listens for messages from main process, shows toast
+// ═══════════════════════════════════════════════
+function initAutoUpdater() {
+  if (!window.beatforge?.updater) return; // not in Electron
+
+  const toast      = document.getElementById('update-toast');
+  const title      = document.getElementById('update-toast-title');
+  const msg        = document.getElementById('update-toast-msg');
+  const icon       = document.getElementById('update-toast-icon');
+  const progressW  = document.getElementById('update-progress-wrap');
+  const progressB  = document.getElementById('update-progress-bar');
+  const restartBtn = document.getElementById('update-restart-btn');
+  const dismissBtn = document.getElementById('update-dismiss-btn');
+
+  function showToast() { toast.classList.remove('update-toast--hidden'); }
+  function hideToast() { toast.classList.add('update-toast--hidden'); }
+
+  window.beatforge.updater.onStatus(({ type, version, message }) => {
+    showToast();
+    if (type === 'downloading') {
+      icon.textContent = '⬇';
+      title.textContent = `BeatForge ${version} available`;
+      msg.textContent = 'Downloading in the background...';
+      progressW.style.display = '';
+      restartBtn.style.display = 'none';
+    } else if (type === 'ready') {
+      icon.textContent = '✅';
+      title.textContent = `BeatForge ${version} ready`;
+      msg.textContent = 'Restart to apply the update.';
+      progressW.style.display = 'none';
+      restartBtn.style.display = '';
+    }
+  });
+
+  window.beatforge.updater.onProgress(({ percent }) => {
+    progressB.style.width = `${percent}%`;
+  });
+
+  restartBtn.addEventListener('click', () => window.beatforge.updater.install());
+  dismissBtn.addEventListener('click', hideToast);
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  // initAutoUpdater is called after DOMContentLoaded alongside other inits
+  initAutoUpdater();
+});

@@ -774,3 +774,84 @@ html, body { height:100%; background:var(--bg); color:var(--text); font-family:'
   padding: 0.6rem 1.2rem;
   font-size: 0.82rem;
 }
+
+/* ── AUTO-UPDATE TOAST ── */
+.update-toast {
+  position: fixed;
+  bottom: 1.5rem;
+  right: 1.5rem;
+  z-index: 9999;
+  transition: opacity 0.3s, transform 0.3s;
+}
+.update-toast--hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(12px);
+}
+.update-toast-inner {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  background: #1a1a1a;
+  border: 1px solid rgba(201,168,76,0.35);
+  border-radius: 10px;
+  padding: 0.8rem 1rem;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+  max-width: 340px;
+}
+#update-toast-icon { font-size: 1.2rem; flex-shrink:0; }
+.update-toast-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  flex: 1;
+}
+.update-toast-text strong {
+  font-size: 0.8rem;
+  color: var(--gold);
+}
+.update-toast-text span {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+.update-progress-wrap {
+  width: 80px;
+  height: 4px;
+  background: rgba(255,255,255,0.1);
+  border-radius: 2px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.update-progress-bar {
+  height: 100%;
+  background: var(--gold);
+  border-radius: 2px;
+  width: 0%;
+  transition: width 0.3s;
+}
+.update-restart-btn {
+  background: rgba(201,168,76,0.15);
+  border: 1px solid rgba(201,168,76,0.4);
+  color: var(--gold);
+  border-radius: 6px;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+.update-restart-btn:hover {
+  background: rgba(201,168,76,0.25);
+}
+.update-dismiss-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.8rem;
+  padding: 0.2rem;
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+.update-dismiss-btn:hover { color: var(--text-primary); }

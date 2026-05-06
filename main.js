@@ -2,8 +2,49 @@ const { app, BrowserWindow, ipcMain, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const { autoUpdater } = require('electron-updater');
 
 let mainWindow;
+
+// ─── AUTO UPDATER CONFIG ───
+autoUpdater.autoDownload = true;         // download silently in background
+autoUpdater.autoInstallOnAppQuit = true; // install when user quits
+
+function setupAutoUpdater() {
+  // Check for updates 3 seconds after launch (give the window time to load)
+  setTimeout(() => autoUpdater.checkForUpdates(), 3000);
+
+  autoUpdater.on('update-available', (info) => {
+    mainWindow?.webContents.send('updater:status', {
+      type: 'downloading',
+      version: info.version,
+      message: `New version ${info.version} downloading in the background...`
+    });
+  });
+
+  autoUpdater.on('update-not-available', () => {
+    // Silently do nothing — don't bother the user
+  });
+
+  autoUpdater.on('download-progress', (progress) => {
+    mainWindow?.webContents.send('updater:progress', {
+      percent: Math.round(progress.percent)
+    });
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    mainWindow?.webContents.send('updater:status', {
+      type: 'ready',
+      version: info.version,
+      message: `BeatForge ${info.version} ready — restart to update`
+    });
+  });
+
+  autoUpdater.on('error', (err) => {
+    // Silently log — don't crash or annoy the user over update failures
+    console.error('AutoUpdater error:', err.message);
+  });
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -33,7 +74,10 @@ function createWindow() {
   }
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  createWindow();
+  setupAutoUpdater();
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
@@ -43,15 +87,18 @@ app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
 
+// ─── IPC: RESTART & INSTALL UPDATE ───
+ipcMain.on('updater:install', () => {
+  autoUpdater.quitAndInstall();
+});
+
 // ─── IPC: MIDI OUTPUTS ───
 ipcMain.handle('midi:listOutputs', async () => {
   try {
     const JZZ = require('jzz');
     const info = JZZ.info();
     return info.outputs.map(o => ({ name: o.name, id: o.id }));
-  } catch (e) {
-    return [];
-  }
+  } catch (e) { return []; }
 });
 
 // ─── IPC: SEND MIDI NOTE ───
@@ -62,9 +109,7 @@ ipcMain.handle('midi:sendNote', async (event, { output, channel, note, velocity,
     port.noteOn(channel, note, velocity);
     setTimeout(() => port.noteOff(channel, note), duration || 200);
     return true;
-  } catch (e) {
-    return false;
-  }
+  } catch (e) { return false; }
 });
 
 // ─── IPC: SEND MIDI PATTERN ───
@@ -79,35 +124,22 @@ ipcMain.handle('midi:sendPattern', async (event, { output, channel, notes }) => 
       }, n.time || 0);
     }
     return true;
-  } catch (e) {
-    return false;
-  }
+  } catch (e) { return false; }
 });
 
 // ─── IPC: NATIVE FILE DRAG ───
-// Renderer sends MIDI bytes + filename → we write to temp dir → trigger OS native drag
 ipcMain.on('midi:startDrag', (event, { filename, midiBytes }) => {
   try {
     const tmpDir = path.join(os.tmpdir(), 'beatforge_midi');
     if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
-
     const filePath = path.join(tmpDir, filename);
     fs.writeFileSync(filePath, Buffer.from(midiBytes));
-
-    // Build a small drag icon
-    const icon = nativeImage.createFromDataURL(
-      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAA' +
-      'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' +
-      'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
-    );
-
+    const icon = nativeImage.createEmpty();
     event.sender.startDrag({ file: filePath, icon });
-  } catch (e) {
-    console.error('Drag error:', e);
-  }
+  } catch (e) { console.error('Drag error:', e); }
 });
 
-// ─── IPC: SAVE MIDI FILE (fallback download) ───
+// ─── IPC: SAVE MIDI FILE ───
 ipcMain.handle('midi:save', async (event, { filename, midiBytes }) => {
   try {
     const { dialog } = require('electron');
@@ -120,9 +152,7 @@ ipcMain.handle('midi:save', async (event, { filename, midiBytes }) => {
       return { saved: true, path: result.filePath };
     }
     return { saved: false };
-  } catch (e) {
-    return { saved: false, error: e.message };
-  }
+  } catch (e) { return { saved: false, error: e.message }; }
 });
 
 // ─── IPC: AI GENERATION ───
@@ -135,7 +165,5 @@ ipcMain.handle('ai:generate', async (event, { prompt, context }) => {
     });
     const data = await response.json();
     return data;
-  } catch (e) {
-    return { error: e.message };
-  }
+  } catch (e) { return { error: e.message }; }
 });

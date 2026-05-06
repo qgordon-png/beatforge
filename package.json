@@ -1,7 +1,7 @@
 {
   "name": "beatforge",
-  "version": "0.1.0",
-  "description": "AI Co-Producer — Layer by layer music production assistant",
+  "version": "0.2.0",
+  "description": "AI Co-Producer \u2014 Layer by layer music production assistant",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -16,7 +16,8 @@
   },
   "dependencies": {
     "jzz": "^1.7.1",
-    "tone": "^14.7.77"
+    "tone": "^14.7.77",
+    "electron-updater": "^6.1.7"
   },
   "build": {
     "appId": "com.beatforge.app",
@@ -35,6 +36,11 @@
       "src/**/*",
       "ai/**/*",
       "assets/**/*"
-    ]
+    ],
+    "publish": {
+      "provider": "github",
+      "owner": "qgordon-png",
+      "repo": "beatforge"
+    }
   }
 }

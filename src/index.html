@@ -527,5 +527,22 @@
   </div>
 
   <script src="app.js"></script>
+
+    <!-- ─── AUTO-UPDATE TOAST ─── -->
+    <div id="update-toast" class="update-toast update-toast--hidden">
+      <div class="update-toast-inner">
+        <span id="update-toast-icon">⬇</span>
+        <div class="update-toast-text">
+          <strong id="update-toast-title">Update available</strong>
+          <span id="update-toast-msg">Downloading in the background...</span>
+        </div>
+        <div id="update-progress-wrap" class="update-progress-wrap">
+          <div id="update-progress-bar" class="update-progress-bar"></div>
+        </div>
+        <button id="update-restart-btn" class="update-restart-btn" style="display:none">Restart now ↺</button>
+        <button id="update-dismiss-btn" class="update-dismiss-btn">✕</button>
+      </div>
+    </div>
+
 </body>
 </html>

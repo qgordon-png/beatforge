@@ -1,23 +1,25 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('beatforge', {
-  // MIDI API
   midi: {
     listOutputs: () => ipcRenderer.invoke('midi:listOutputs'),
-    sendNote: (params) => ipcRenderer.invoke('midi:sendNote', params),
-    sendPattern: (params) => ipcRenderer.invoke('midi:sendPattern', params),
-    // Native drag — sends bytes to main process which writes temp file + triggers OS drag
-    startDrag: (filename, midiBytes) => ipcRenderer.send('midi:startDrag', { filename, midiBytes }),
-    // Save dialog fallback
-    save: (filename, midiBytes) => ipcRenderer.invoke('midi:save', { filename, midiBytes }),
+    sendNote:    (p)  => ipcRenderer.invoke('midi:sendNote', p),
+    sendPattern: (p)  => ipcRenderer.invoke('midi:sendPattern', p),
+    startDrag:   (filename, midiBytes) => ipcRenderer.send('midi:startDrag', { filename, midiBytes }),
+    save:        (filename, midiBytes) => ipcRenderer.invoke('midi:save', { filename, midiBytes }),
   },
-  // AI API
   ai: {
     generate: (prompt, context) => ipcRenderer.invoke('ai:generate', { prompt, context }),
   },
-  // App info
   app: {
-    getVersion: () => '0.1.0',
+    getVersion: () => '0.2.0',
     isElectron: true,
+  },
+  updater: {
+    // Listen for update status messages from main process
+    onStatus:   (cb) => ipcRenderer.on('updater:status',   (_, data) => cb(data)),
+    onProgress: (cb) => ipcRenderer.on('updater:progress', (_, data) => cb(data)),
+    // Tell main to quit and install
+    install: () => ipcRenderer.send('updater:install'),
   }
 });
