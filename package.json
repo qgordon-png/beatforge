@@ -1,0 +1,40 @@
+{
+  "name": "beatforge",
+  "version": "0.1.0",
+  "description": "AI Co-Producer — Layer by layer music production assistant",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win",
+    "build:mac": "electron-builder --mac"
+  },
+  "author": "Quinton Gordon",
+  "license": "proprietary",
+  "devDependencies": {
+    "electron": "^28.1.0",
+    "electron-builder": "^24.9.1"
+  },
+  "dependencies": {
+    "jzz": "^1.7.1",
+    "tone": "^14.7.77"
+  },
+  "build": {
+    "appId": "com.beatforge.app",
+    "productName": "BeatForge",
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.png"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "assets/icon.png"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "ai/**/*",
+      "assets/**/*"
+    ]
+  }
+}
