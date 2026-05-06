@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write   # needed to create GitHub Releases
+  contents: write
 
 jobs:
   build-windows:
@@ -23,10 +23,28 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Build & publish Windows installer
-        run: npm run build -- --publish always
+      - name: Build Windows installer
+        run: npm run build
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get version from package.json
+        id: pkg
+        shell: bash
+        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.pkg.outputs.version }}
+          name: BeatForge v${{ steps.pkg.outputs.version }}
+          draft: false
+          prerelease: false
+          files: |
+            dist/*.exe
+            dist/latest.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload installer artifact (backup)
         uses: actions/upload-artifact@v4
