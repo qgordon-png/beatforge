@@ -733,3 +733,44 @@ html, body { height:100%; background:var(--bg); color:var(--text); font-family:'
 .drag-card-split {
   right: 3.2rem !important;
 }
+
+/* ── ARRANGEMENT EXPORT CARD ── */
+.arr-export-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  background: linear-gradient(135deg, rgba(201,168,76,0.06), rgba(201,168,76,0.02));
+  border: 1px solid rgba(201,168,76,0.25);
+  border-radius: 12px;
+  padding: 1.1rem 1.3rem;
+  margin-bottom: 1.5rem;
+}
+.arr-export-left {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+}
+.arr-export-icon {
+  font-size: 1.8rem;
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+.arr-export-left strong {
+  color: var(--gold);
+  font-size: 0.95rem;
+  display: block;
+  margin-bottom: 0.3rem;
+}
+.arr-export-left p {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin: 0;
+}
+.arr-export-card .btn-gold {
+  white-space: nowrap;
+  flex-shrink: 0;
+  padding: 0.6rem 1.2rem;
+  font-size: 0.82rem;
+}

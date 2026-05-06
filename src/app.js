@@ -312,6 +312,7 @@ function initPanelButtons() {
 
   // Export buttons
   document.getElementById('export-midi')?.addEventListener('click', () => exportFullMidiPack());
+  document.getElementById('export-arrangement')?.addEventListener('click', () => exportArrangement());
   document.getElementById('export-drums-midi')?.addEventListener('click', () => exportDrumMidi());
   document.getElementById('export-bass-midi')?.addEventListener('click', () => exportBassMidi());
   document.getElementById('export-melody-midi')?.addEventListener('click', () => exportMelodyMidi());
@@ -1322,5 +1323,344 @@ function getMidiForLayer(layer) {
     }
   }
   return _origGetMidiForLayer(layer);
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
+// ARRANGEMENT EXPORT ENGINE
+// Exports one .mid file per section per layer — with CC automation
+// baked in based on the section's role (buildup, drop, breakdown etc)
+// ═══════════════════════════════════════════════════════════════════
+
+// ── CC Map (standard + synth conventions) ──
+const CC = {
+  filterCutoff:  74,   // Standard / Serum / Sylenth
+  filterRes:     71,   // Standard / Serum
+  reverbSend:    91,   // General MIDI reverb
+  delaySend:     92,   // General MIDI delay/chorus
+  volume:         7,   // Channel volume
+  pan:           10,
+  expression:    11,
+  chorusSend:    93,
+  drive:         24,   // Serum OSC drive (approx)
+  lfoRate:       76,   // Mod
+};
+
+// ── Section role classifier ──
+function getSectionRole(name) {
+  const n = name.toLowerCase();
+  if (n.includes('intro'))     return 'intro';
+  if (n.includes('build'))     return 'buildup';
+  if (n.includes('drop'))      return 'drop';
+  if (n.includes('breakdown')) return 'breakdown';
+  if (n.includes('outro'))     return 'outro';
+  return 'neutral';
+}
+
+// ── CC automation curve definitions per section role ──
+// Each entry: { cc, points: [{pos: 0-1, val: 0-127}] }
+// pos is normalised position within the clip (0=start, 1=end)
+function getCCAutomation(role, layer) {
+  const curves = {
+    buildup: [
+      // Filter sweeps open over the whole section
+      { cc: CC.filterCutoff, points: [{pos:0, val:20}, {pos:0.6, val:80}, {pos:1, val:120}] },
+      { cc: CC.filterRes,    points: [{pos:0, val:10}, {pos:0.7, val:40}, {pos:1, val:20}] },
+      // Reverb builds up then throws on last beat
+      { cc: CC.reverbSend,   points: [{pos:0, val:20}, {pos:0.85, val:30}, {pos:0.95, val:100}, {pos:1, val:10}] },
+      // Volume swells
+      { cc: CC.expression,   points: [{pos:0, val:60}, {pos:1, val:115}] },
+    ],
+    drop: [
+      // Filter fully open, stays open
+      { cc: CC.filterCutoff, points: [{pos:0, val:120}, {pos:1, val:120}] },
+      { cc: CC.filterRes,    points: [{pos:0, val:15}, {pos:1, val:15}] },
+      { cc: CC.reverbSend,   points: [{pos:0, val:18}, {pos:1, val:18}] },
+      { cc: CC.expression,   points: [{pos:0, val:110}, {pos:1, val:110}] },
+    ],
+    breakdown: [
+      // Filter closes right down — that "stripped back" feel
+      { cc: CC.filterCutoff, points: [{pos:0, val:90}, {pos:0.2, val:45}, {pos:1, val:30}] },
+      { cc: CC.reverbSend,   points: [{pos:0, val:60}, {pos:1, val:75}] },  // washy reverb
+      { cc: CC.delaySend,    points: [{pos:0, val:40}, {pos:0.5, val:70}, {pos:1, val:40}] },
+      { cc: CC.expression,   points: [{pos:0, val:75}, {pos:0.5, val:55}, {pos:1, val:65}] },
+    ],
+    intro: [
+      // Starts dark, slightly opens
+      { cc: CC.filterCutoff, points: [{pos:0, val:35}, {pos:1, val:65}] },
+      { cc: CC.reverbSend,   points: [{pos:0, val:45}, {pos:1, val:35}] },
+      { cc: CC.expression,   points: [{pos:0, val:55}, {pos:1, val:75}] },
+    ],
+    outro: [
+      // Closes back down — mirror of intro
+      { cc: CC.filterCutoff, points: [{pos:0, val:65}, {pos:1, val:25}] },
+      { cc: CC.reverbSend,   points: [{pos:0, val:35}, {pos:1, val:55}] },
+      { cc: CC.expression,   points: [{pos:0, val:75}, {pos:1, val:45}] },
+    ],
+    neutral: [
+      { cc: CC.filterCutoff, points: [{pos:0, val:80}, {pos:1, val:80}] },
+      { cc: CC.expression,   points: [{pos:0, val:90}, {pos:1, val:90}] },
+    ],
+  };
+
+  // Drums get lighter automation — velocity-focused, no filter sweeps
+  if (layer === 'drums') {
+    return {
+      buildup:   [{ cc: CC.expression, points: [{pos:0, val:65}, {pos:1, val:110}] }],
+      drop:      [{ cc: CC.expression, points: [{pos:0, val:110}, {pos:1, val:110}] }],
+      breakdown: [{ cc: CC.expression, points: [{pos:0, val:80}, {pos:0.5, val:55}, {pos:1, val:45}] }],
+      intro:     [{ cc: CC.expression, points: [{pos:0, val:60}, {pos:1, val:75}] }],
+      outro:     [{ cc: CC.expression, points: [{pos:0, val:75}, {pos:1, val:50}] }],
+      neutral:   [{ cc: CC.expression, points: [{pos:0, val:90}, {pos:1, val:90}] }],
+    }[role] || [];
+  }
+
+  return curves[role] || curves.neutral;
+}
+
+// ── Interpolate CC curve into MIDI CC events ──
+// resolution = number of CC messages to insert across the clip
+function buildCCEvents(curves, totalTicks, channel, resolution = 32) {
+  const events = [];
+  const ch = channel & 0x0F;
+
+  curves.forEach(curve => {
+    const pts = curve.points;
+    for (let i = 0; i <= resolution; i++) {
+      const pos = i / resolution;
+      const tick = Math.round(pos * totalTicks);
+
+      // Find surrounding points and interpolate
+      let val = pts[0].val;
+      for (let j = 0; j < pts.length - 1; j++) {
+        if (pos >= pts[j].pos && pos <= pts[j+1].pos) {
+          const t = (pos - pts[j].pos) / (pts[j+1].pos - pts[j].pos);
+          val = Math.round(pts[j].val + t * (pts[j+1].val - pts[j].val));
+          break;
+        }
+      }
+      val = Math.max(0, Math.min(127, val));
+      events.push({ tick, data: [0xB0 | ch, curve.cc, val] });
+    }
+  });
+
+  return events;
+}
+
+// ── Build a MIDI file with notes + CC automation ──
+function buildArrangementClip(noteEvents, ccCurves, channel, bpm, bars, trackName) {
+  const ticksPerBeat = 480;
+  const ticksPerStep = ticksPerBeat / 4;
+  const totalTicks   = bars * 16 * ticksPerStep;
+  const ch = channel & 0x0F;
+
+  const header = [
+    0x4D,0x54,0x68,0x64, 0x00,0x00,0x00,0x06,
+    0x00,0x00, 0x00,0x01,
+    (ticksPerBeat>>8)&0xFF, ticksPerBeat&0xFF
+  ];
+
+  let events = [];
+
+  const tempo = Math.round(60000000 / bpm);
+  events.push({ tick:0, data:[0xFF,0x51,0x03,(tempo>>16)&0xFF,(tempo>>8)&0xFF,tempo&0xFF] });
+
+  const nameBytes = trackName.split('').map(c=>c.charCodeAt(0));
+  events.push({ tick:0, data:[0xFF,0x03,nameBytes.length,...nameBytes] });
+
+  // CC automation
+  events.push(...buildCCEvents(ccCurves, totalTicks, ch));
+
+  // Notes
+  events.push(...noteEvents);
+
+  // End of track
+  events.push({ tick: totalTicks + ticksPerBeat, data:[0xFF,0x2F,0x00] });
+
+  events.sort((a,b) => a.tick !== b.tick ? a.tick - b.tick : 0);
+
+  let trackBytes = [];
+  let prev = 0;
+  events.forEach(evt => {
+    const delta = evt.tick - prev;
+    prev = evt.tick;
+    trackBytes.push(...writeVarLen(delta), ...evt.data);
+  });
+
+  const tLen = trackBytes.length;
+  const track = [0x4D,0x54,0x72,0x6B,
+    (tLen>>24)&0xFF,(tLen>>16)&0xFF,(tLen>>8)&0xFF,tLen&0xFF,
+    ...trackBytes
+  ];
+
+  return new Uint8Array([...header, ...track]);
+}
+
+// ── Build note events for a layer (reuses existing pattern/notes) ──
+function buildLayerNoteEvents(layer, bars, channel) {
+  const ch = channel & 0x0F;
+  const ticksPerBeat = 480;
+  const ticksPerStep = ticksPerBeat / 4;
+  const events = [];
+
+  if (layer === 'drums') {
+    DRUM_ROWS.forEach(row => {
+      const note = DRUM_MIDI_NOTES[row.id] || 36;
+      for (let bar = 0; bar < bars; bar++) {
+        for (let step = 0; step < 16; step++) {
+          if (state.drums.pattern[`${row.id}-${step}`]) {
+            const tick = (bar * 16 + step) * ticksPerStep;
+            const dur  = Math.round(ticksPerStep * 0.9);
+            events.push({ tick,       data:[0x99, note, 100] });
+            events.push({ tick:tick+dur, data:[0x89, note, 0] });
+          }
+        }
+      }
+    });
+  } else {
+    const notes = layer === 'bass' ? state.bass.notes
+                : layer === 'melody' ? state.melody.notes
+                : state.pads.notes;
+    notes.forEach(n => {
+      events.push({ tick: n.tick,          data:[0x90|ch, n.note, n.velocity||100] });
+      events.push({ tick: n.tick+n.duration, data:[0x80|ch, n.note, 0] });
+    });
+  }
+
+  return events;
+}
+
+// ── Layer → channel / name map ──
+const LAYER_META = {
+  drums:  { channel:9,  label:'Drums',  short:'DRM' },
+  bass:   { channel:0,  label:'Bass',   short:'BSS' },
+  melody: { channel:1,  label:'Melody', short:'MLY' },
+  pads:   { channel:2,  label:'Pads',   short:'PAD' },
+};
+
+// ── Main arrangement export ──
+async function exportArrangement() {
+  const sections = getSections(state.scene.length);
+  const bpm      = state.scene.bpm;
+  const key      = state.scene.key;
+  const bars     = 2; // each section uses the 2-bar loop
+
+  const layers = ['drums','bass','melody','pads'].filter(l => hasLayerData(l));
+
+  if (!layers.length) {
+    addMessage('bot', "Nothing generated yet — build your patterns first, then export the arrangement. <em>I can't automate silence. Well, I could, but you wouldn't enjoy it.</em>");
+    return;
+  }
+
+  const files = [];  // { filename, bytes }
+
+  sections.forEach((sectionName, si) => {
+    const role = getSectionRole(sectionName);
+    const padNum = String(si+1).padStart(2,'0');
+    const safeName = sectionName.replace(/\s+/g,'_');
+
+    layers.forEach(layer => {
+      // Check if this layer is active in this section
+      const arrKey = `${layer === 'drums' ? 'kick' : layer}-${si}`;
+      const isActive = state.arrangement[arrKey] !== false;
+      if (!isActive) return;
+
+      const meta   = LAYER_META[layer];
+      const ccCurves = getCCAutomation(role, layer);
+      const noteEvents = buildLayerNoteEvents(layer, bars, meta.channel);
+
+      const filename = `${padNum}_${safeName}__${meta.short}.mid`;
+      const trackName = `${sectionName} ${meta.label}`;
+      const bytes = buildArrangementClip(noteEvents, ccCurves, meta.channel, bpm, bars, trackName);
+
+      files.push({ filename, bytes, section: sectionName, layer, role });
+    });
+  });
+
+  if (!files.length) {
+    addMessage('bot', "All layers are muted in the arrangement. Flip some cells on and try again.");
+    return;
+  }
+
+  // Export
+  if (isElectron()) {
+    // Save each file — native dialog per section folder grouping
+    const { dialog } = window.beatforge;
+    for (const f of files) {
+      await window.beatforge.midi.save(f.filename, Array.from(f.bytes));
+    }
+  } else {
+    files.forEach((f, i) => {
+      setTimeout(() => downloadMidi(f.bytes, f.filename), i * 300);
+    });
+  }
+
+  // Also generate the cheat sheet
+  exportCCCheatSheet(sections, layers, bpm, key);
+
+  const sectionCount = sections.length;
+  const fileCount    = files.length;
+  addMessage('bot', `Arrangement exported — <strong>${fileCount} clips</strong> across ${sectionCount} sections. CC automation is baked into every clip: filter sweeps on buildups, reverb throws before drops, closed filter on breakdowns. Drop them into Ableton, open a clip → MIDI envelope → map CC74 to your filter cutoff on Serum/Sylenth. <em>You're welcome.</em>`);
+}
+
+// ── CC Cheat Sheet ──
+function exportCCCheatSheet(sections, layers, bpm, key) {
+  const lines = [
+    `BeatForge Arrangement Export`,
+    `Track: ${key} · ${bpm} BPM · ${sections.length} sections`,
+    `Generated: ${new Date().toLocaleString()}`,
+    ``,
+    `── CC AUTOMATION MAP ──`,
+    ``,
+    `CC 74  →  Filter Cutoff    (Serum: Fil Cutoff | Sylenth: CutOff)`,
+    `CC 71  →  Filter Resonance (Serum: Fil Res    | Sylenth: Resonance)`,
+    `CC 91  →  Reverb Send      (Ableton Reverb: Dry/Wet)`,
+    `CC 92  →  Delay Send       (Ableton Delay: Dry/Wet)`,
+    `CC 11  →  Expression       (Velocity/volume riding)`,
+    ``,
+    `── HOW TO MAP IN ABLETON ──`,
+    ``,
+    `1. Load your synth (Serum / Sylenth / etc) on the MIDI track`,
+    `2. Open the MIDI clip → click the 'E' envelope button`,
+    `3. In the CC lane dropdown, select e.g. 'CC 74 (Filter Cutoff)'`,
+    `4. The automation curve is already drawn in`,
+    `5. On your synth, right-click Filter Cutoff → MIDI Map → move the CC74 fader`,
+    `   Or: CMD+M (Mac) / CTRL+M (Win) in Ableton → click the synth param → done`,
+    ``,
+    `── SECTION ROLES & AUTOMATION ──`,
+    ``,
+    ...sections.map(s => {
+      const role = getSectionRole(s);
+      const desc = {
+        intro:     'Filter opens slowly. Reverb high. Eases listener in.',
+        buildup:   'Filter sweeps fully open. Resonance peaks mid-section. Reverb throw on final beat.',
+        drop:      'Filter fully open. Dry/punchy. Max expression.',
+        breakdown: 'Filter closes. Heavy reverb/delay. Stripped-back wash.',
+        outro:     'Filter closes back down. Mirrors intro.',
+        neutral:   'Steady state. Moderate filter position.',
+      }[role] || '';
+      return `  ${s.padEnd(16)} [${role.toUpperCase().padEnd(10)}]  ${desc}`;
+    }),
+    ``,
+    `── FILE NAMING ──`,
+    `  01_Intro__DRM.mid   = Section 1, Drums`,
+    `  01_Intro__BSS.mid   = Section 1, Bass`,
+    `  02_Build_A__MLY.mid = Section 2, Melody`,
+    `  etc.`,
+    ``,
+    `Drop all files into one Ableton set. Each clip goes on its own track.`,
+    `Arrangement view: place clips in order per the section numbering.`,
+  ];
+
+  const text = lines.join('\n');
+  const blob = new Blob([text], { type:'text/plain' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url;
+  a.download = `BeatForge_CC_CheatSheet_${key}_${bpm}bpm.txt`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
