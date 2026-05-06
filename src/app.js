@@ -1105,3 +1105,222 @@ function goToStep(step) {
 // Also re-export the function so it isn't shadowed
 window._goToStep = goToStep;
 
+
+// ═══════════════════════════════════════════════
+// SPLIT DRUM MIDI EXPORT
+// One .mid file per instrument — drop each onto its own track
+// ═══════════════════════════════════════════════
+
+function buildSingleDrumMidi(rowId, pattern, bpm, bars = 2) {
+  // Builds a MIDI file containing only one drum instrument
+  const ticksPerBeat = 480;
+  const ticksPerStep = ticksPerBeat / 4;
+  const totalSteps = 16 * bars;
+  const note = DRUM_MIDI_NOTES[rowId] || 36;
+
+  const header = [
+    0x4D, 0x54, 0x68, 0x64,
+    0x00, 0x00, 0x00, 0x06,
+    0x00, 0x00,             // format 0
+    0x00, 0x01,             // 1 track
+    (ticksPerBeat >> 8) & 0xFF, ticksPerBeat & 0xFF
+  ];
+
+  let events = [];
+
+  const tempo = Math.round(60000000 / bpm);
+  events.push({ tick: 0, data: [0xFF, 0x51, 0x03,
+    (tempo >> 16) & 0xFF, (tempo >> 8) & 0xFF, tempo & 0xFF] });
+
+  const name = `BeatForge ${rowId.charAt(0).toUpperCase() + rowId.slice(1)}`;
+  const nameBytes = name.split('').map(c => c.charCodeAt(0));
+  events.push({ tick: 0, data: [0xFF, 0x03, nameBytes.length, ...nameBytes] });
+
+  for (let bar = 0; bar < bars; bar++) {
+    for (let step = 0; step < 16; step++) {
+      const key = `${rowId}-${step}`;
+      if (pattern[key]) {
+        const tick = (bar * 16 + step) * ticksPerStep;
+        const dur  = Math.round(ticksPerStep * 0.9);
+        events.push({ tick,       data: [0x99, note, 100] });
+        events.push({ tick: tick + dur, data: [0x89, note, 0] });
+      }
+    }
+  }
+
+  events.push({ tick: totalSteps * ticksPerStep, data: [0xFF, 0x2F, 0x00] });
+  events.sort((a, b) => a.tick - b.tick);
+
+  let trackBytes = [];
+  let prevTick = 0;
+  events.forEach(evt => {
+    const delta = evt.tick - prevTick;
+    prevTick = evt.tick;
+    trackBytes.push(...writeVarLen(delta));
+    trackBytes.push(...evt.data);
+  });
+
+  const trackLen = trackBytes.length;
+  const track = [
+    0x4D, 0x54, 0x72, 0x6B,
+    (trackLen >> 24) & 0xFF, (trackLen >> 16) & 0xFF,
+    (trackLen >> 8) & 0xFF, trackLen & 0xFF,
+    ...trackBytes
+  ];
+
+  return new Uint8Array([...header, ...track]);
+}
+
+// Check which rows have at least one active step
+function getActiveDrumRows() {
+  return DRUM_ROWS.filter(row =>
+    Array.from({length:16}, (_,i) => state.drums.pattern[`${row.id}-${i}`]).some(Boolean)
+  );
+}
+
+// Download one file per active drum instrument
+async function exportDrumsSplit(fromCard) {
+  const active = getActiveDrumRows();
+  if (!active.length) {
+    if (fromCard) pulseCard(fromCard, 'empty');
+    addMessage('bot', "Nothing on the sequencer yet! Add some steps first. <em>Even a kick drum. Something.</em>");
+    return;
+  }
+
+  const bpm = state.scene.bpm;
+  const bars = 2;
+
+  if (isElectron()) {
+    // Save dialog for each file in sequence
+    for (const row of active) {
+      const bytes = buildSingleDrumMidi(row.id, state.drums.pattern, bpm, bars);
+      const filename = `BeatForge_${row.name.replace(/\s+/g,'_')}_${bpm}bpm.mid`;
+      await window.beatforge.midi.save(filename, Array.from(bytes));
+    }
+    if (fromCard) pulseCard(fromCard, 'saved');
+    addMessage('bot', `Split export done — ${active.length} files, one per instrument. Each one goes on its own track. <em>Now THAT's a clean session.</em>`);
+  } else {
+    // Browser: trigger downloads one by one with slight delay
+    active.forEach((row, i) => {
+      setTimeout(() => {
+        const bytes = buildSingleDrumMidi(row.id, state.drums.pattern, bpm, bars);
+        const filename = `BeatForge_${row.name.replace(/\s+/g,'_')}_${bpm}bpm.mid`;
+        downloadMidi(bytes, filename);
+      }, i * 400);
+    });
+    if (fromCard) pulseCard(fromCard, 'saved');
+    addMessage('bot', `${active.length} MIDI files downloading — one per drum. Drop each onto its own track. <em>You're welcome.</em>`);
+  }
+}
+
+
+// ═══════════════════════════════════════════════
+// DRUM CARD — COMBINED / SPLIT MODE TOGGLE
+// ═══════════════════════════════════════════════
+
+let drumExportMode = 'combined'; // 'combined' | 'split'
+
+function initDrumExportToggle() {
+  const btnCombined = document.getElementById('drum-export-combined');
+  const btnSplit    = document.getElementById('drum-export-split-toggle');  // toggle button
+  const saveBtn     = document.getElementById('export-drums-midi');
+  const splitBtn    = document.getElementById('export-drums-split');
+  const card        = document.getElementById('drag-card-drums');
+  const preview     = document.getElementById('drum-split-preview');
+
+  // Re-query the mode buttons (they're inside the card)
+  const modeCombined = document.getElementById('drum-export-combined');
+  const modeSplit    = document.getElementById('drum-export-split');
+
+  if (!modeCombined || !modeSplit) return;
+
+  function setMode(mode) {
+    drumExportMode = mode;
+    modeCombined.classList.toggle('dem-btn--active', mode === 'combined');
+    modeSplit.classList.toggle('dem-btn--active', mode === 'split');
+
+    if (saveBtn) saveBtn.style.display = mode === 'combined' ? '' : 'none';
+    if (splitBtn) splitBtn.style.display = mode === 'split' ? '' : 'none';
+
+    // Update card drag behaviour label
+    const handle = card?.querySelector('.drag-card-handle');
+    if (handle) {
+      handle.innerHTML = mode === 'combined'
+        ? '<span class="drag-handle-icon">⠿</span> drag to Ableton (full kit)'
+        : '<span class="drag-handle-icon">⠿</span> save split — one file per drum';
+    }
+
+    // Update card data attribute so drag engine knows
+    if (card) card.dataset.exportMode = mode;
+
+    renderSplitPreview(preview);
+  }
+
+  modeCombined.addEventListener('click', (e) => { e.stopPropagation(); setMode('combined'); });
+  modeSplit.addEventListener('click',    (e) => { e.stopPropagation(); setMode('split'); });
+
+  // Split save button
+  if (splitBtn) {
+    splitBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      exportDrumsSplit(card);
+    });
+  }
+
+  // Override drum-export-combined save button to trigger split when in split mode
+  if (saveBtn) {
+    saveBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      saveMidiLayer('drums', card);
+    });
+  }
+
+  renderSplitPreview(preview);
+  setMode('combined');
+}
+
+function renderSplitPreview(container) {
+  if (!container) return;
+  const active = getActiveDrumRows();
+  if (!active.length) {
+    container.innerHTML = '<span class="split-empty">No steps yet</span>';
+    return;
+  }
+  container.innerHTML = active.map(row =>
+    `<span class="split-pill">
+      <span class="split-pill-dot" style="background:${getDrumColour(row.id)}"></span>
+      ${row.name}
+    </span>`
+  ).join('');
+}
+
+function getDrumColour(rowId) {
+  const map = { kick:'#ff5252', snare:'#ffcc52', chh:'#ffaa33', ohh:'#ff7744', perc:'#aa6bff' };
+  return map[rowId] || '#888';
+}
+
+// Patch initDragCards to also init the drum toggle
+const _origInitDragCards = initDragCards;
+function initDragCards() {
+  _origInitDragCards();
+  initDrumExportToggle();
+}
+
+// Patch drag behaviour — if split mode, intercept and save instead
+const _origDragStart = HTMLElement.prototype.addEventListener;
+// We handle this via card.dataset.exportMode check inside the dragstart handler
+// Override getMidiForLayer for drums to respect split mode
+const _origGetMidiForLayer = getMidiForLayer;
+function getMidiForLayer(layer) {
+  if (layer === 'drums') {
+    const card = document.getElementById('drag-card-drums');
+    const mode = card?.dataset.exportMode || 'combined';
+    if (mode === 'split') {
+      // For drag in split mode — export combined anyway (split doesn't make sense as a single drag)
+      // Split is save-only
+      return _origGetMidiForLayer('drums');
+    }
+  }
+  return _origGetMidiForLayer(layer);
+}
+

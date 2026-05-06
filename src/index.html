@@ -410,7 +410,7 @@
           <!-- Drag cards grid -->
           <div class="drag-cards-grid">
 
-            <div class="drag-card" id="drag-card-drums" data-layer="drums">
+            <div class="drag-card drag-card-drums-wrap" id="drag-card-drums" data-layer="drums">
               <div class="drag-card-glow" style="--glow:rgba(255,82,82,0.4)"></div>
               <div class="drag-card-top">
                 <span class="drag-card-icon">🥁</span>
@@ -420,9 +420,18 @@
               <div class="drag-card-sub">Drum Rack · Ch10</div>
               <div class="drag-card-map">C1 · D1 · F#1 · A#1 · D2</div>
               <div class="drag-card-handle">
-                <span class="drag-handle-icon">⠿</span> drag to Ableton
+                <span class="drag-handle-icon">⠿</span> drag to Ableton (full kit)
               </div>
-              <button class="drag-card-save" id="export-drums-midi" title="Save file">⬇</button>
+              <!-- Export mode toggle -->
+              <div class="drum-export-mode">
+                <button class="dem-btn dem-btn--active" id="drum-export-combined" title="One file, all drums">Combined</button>
+                <button class="dem-btn" id="drum-export-split" title="One file per instrument">Split</button>
+              </div>
+              <div class="drum-split-preview" id="drum-split-preview">
+                <!-- filled by JS -->
+              </div>
+              <button class="drag-card-save" id="export-drums-midi" title="Save combined .mid">⬇ Save</button>
+              <button class="drag-card-save drag-card-split" id="export-drums-split" title="Save split files" style="display:none">⬇ Split</button>
             </div>
 
             <div class="drag-card" id="drag-card-bass" data-layer="bass">

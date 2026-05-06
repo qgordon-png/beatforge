@@ -667,3 +667,69 @@ html, body { height:100%; background:var(--bg); color:var(--text); font-family:'
 @media (max-width: 900px) {
   .drag-cards-grid { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* ── DRUM EXPORT MODE TOGGLE ── */
+.drum-export-mode {
+  display: flex;
+  gap: 0.3rem;
+  margin: 0.6rem 0 0.5rem;
+}
+.dem-btn {
+  flex: 1;
+  padding: 0.3rem 0;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.dem-btn:hover {
+  border-color: rgba(201,168,76,0.3);
+  color: var(--text-primary);
+}
+.dem-btn--active {
+  background: rgba(201,168,76,0.12);
+  border-color: rgba(201,168,76,0.5);
+  color: var(--gold);
+}
+
+/* Split preview pills */
+.drum-split-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  min-height: 1.4rem;
+  margin-bottom: 0.5rem;
+}
+.split-pill {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.62rem;
+  color: var(--text-muted);
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 0.15rem 0.5rem;
+}
+.split-pill-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.split-empty {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  opacity: 0.5;
+  font-style: italic;
+}
+
+/* Split save button positioning */
+.drag-card-split {
+  right: 3.2rem !important;
+}
