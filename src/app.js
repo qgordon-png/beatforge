@@ -167,6 +167,14 @@ function goToStep(step) {
 
   // Rebuild dynamic panels
   if (step === 'arrangement') buildArrangementGrid();
+  if (step === 'export') {
+    setTimeout(() => {
+      if (typeof initDragCards === 'function') initDragCards();
+      document.querySelectorAll('.drag-card').forEach(c => {
+        if (typeof updateCardState === 'function') updateCardState(c, c.dataset.layer);
+      });
+    }, 50);
+  }
 }
 
 // ─── ARRANGEMENT GRID ───
@@ -1091,20 +1099,7 @@ function updateExportKeyLabels() {
 }
 
 // Refresh drag cards whenever export panel is opened
-const _origGoToStep = goToStep;
-function goToStep(step) {
-  _origGoToStep(step);
-  if (step === 'export') {
-    setTimeout(() => {
-      initDragCards();
-      // Also refresh card states if navigated back
-      document.querySelectorAll('.drag-card').forEach(c => updateCardState(c, c.dataset.layer));
-    }, 50);
-  }
-}
-
-// Also re-export the function so it isn't shadowed
-window._goToStep = goToStep;
+// goToStep export-panel logic merged into original above
 
 
 // ═══════════════════════════════════════════════
