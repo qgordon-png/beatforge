@@ -1,0 +1,677 @@
+/* ═══════════════════════════════════════════════
+   BEATFORGE — Main App Logic
+═══════════════════════════════════════════════ */
+
+// ─── STATE ───
+const state = {
+  scene: {
+    genre: 'melodic-techno',
+    key: 'Am',
+    bpm: 128,
+    mood: 'driving',
+    length: '6min',
+    reference: null
+  },
+  arrangement: {},
+  drums: { style:'rolling', swing:15, density:5, humanise:30, pattern:{} },
+  bass: { style:'rolling-sub', complexity:4, octave:1, notes:[] },
+  melody: { style:'arp', complexity:5, density:5, notes:[] },
+  pads: { style:'warm-pad', fx:[], notes:[] },
+  currentStep: 'scene'
+};
+
+// Layer definitions
+const LAYERS = [
+  { id:'kick', name:'Kick',    color:'rgba(255,82,82,0.6)' },
+  { id:'hats', name:'Hi-Hats', color:'rgba(255,200,82,0.6)' },
+  { id:'perc', name:'Perc',    color:'rgba(255,140,50,0.6)' },
+  { id:'bass', name:'Bass',    color:'rgba(107,179,255,0.6)' },
+  { id:'lead', name:'Lead',    color:'rgba(201,168,76,0.7)' },
+  { id:'pad',  name:'Pad',     color:'rgba(170,107,255,0.6)' },
+  { id:'fx',   name:'FX',      color:'rgba(107,255,200,0.5)' },
+];
+
+// Section definitions based on track length
+function getSections(length) {
+  const map = {
+    '4min': ['Intro','Build','Drop','Breakdown','Drop 2','Outro'],
+    '6min': ['Intro','Build A','Drop A','Breakdown','Build B','Drop B','Outro'],
+    '8min': ['Intro','Build A','Drop A','Breakdown 1','Build B','Drop B','Breakdown 2','Drop C','Outro'],
+    '10min': ['Intro','Build A','Drop A','Breakdown 1','Build B','Drop B','Breakdown 2','Build C','Drop C','Outro'],
+  };
+  return map[length] || map['6min'];
+}
+
+// Drum rows
+const DRUM_ROWS = [
+  { id:'kick',  name:'Kick' },
+  { id:'snare', name:'Snare' },
+  { id:'chh',   name:'CH Hat' },
+  { id:'ohh',   name:'OH Hat' },
+  { id:'perc',  name:'Perc' },
+];
+
+// ─── INIT ───
+document.addEventListener('DOMContentLoaded', () => {
+  initChips();
+  initBPM();
+  initStepNav();
+  initArrangement();
+  initSequencer();
+  initRangeSliders();
+  initPanelButtons();
+  initAIChat();
+  updateTransportBar();
+});
+
+// ─── CHIP BUTTONS ───
+function initChips() {
+  document.querySelectorAll('.chip-group').forEach(group => {
+    const isMulti = group.classList.contains('multi');
+    group.querySelectorAll('.chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        if (isMulti) {
+          chip.classList.toggle('active');
+        } else {
+          group.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+          chip.classList.add('active');
+        }
+        // Update state
+        const field = group.dataset.field;
+        if (isMulti) {
+          const vals = [...group.querySelectorAll('.chip.active')].map(c => c.dataset.val);
+          updateState(field, vals);
+        } else {
+          updateState(field, chip.dataset.val);
+        }
+      });
+    });
+  });
+}
+
+function updateState(field, value) {
+  switch(field) {
+    case 'genre': state.scene.genre = value; break;
+    case 'key': state.scene.key = value; break;
+    case 'mood': state.scene.mood = value; break;
+    case 'length': state.scene.length = value; break;
+    case 'reference': state.scene.reference = value; break;
+    case 'drum-style': state.drums.style = value; break;
+    case 'bass-style': state.bass.style = value; break;
+    case 'melody-style': state.melody.style = value; break;
+    case 'pad-style': state.pads.style = value; break;
+    case 'fx-elements': state.pads.fx = value; break;
+  }
+  updateTransportBar();
+}
+
+// ─── BPM ───
+function initBPM() {
+  const val = document.getElementById('bpm-val');
+  const down = document.getElementById('bpm-down');
+  const up = document.getElementById('bpm-up');
+
+  const setBPM = (v) => {
+    v = Math.max(80, Math.min(180, v));
+    val.value = v;
+    state.scene.bpm = v;
+    updateTransportBar();
+    // Update preset chips
+    document.querySelectorAll('[data-bpm]').forEach(c => {
+      c.classList.toggle('active', parseInt(c.dataset.bpm) === v);
+    });
+  };
+
+  down.addEventListener('click', () => setBPM(state.scene.bpm - 1));
+  up.addEventListener('click', () => setBPM(state.scene.bpm + 1));
+  val.addEventListener('change', () => setBPM(parseInt(val.value) || 128));
+
+  document.querySelectorAll('[data-bpm]').forEach(c => {
+    c.addEventListener('click', () => setBPM(parseInt(c.dataset.bpm)));
+  });
+}
+
+function updateTransportBar() {
+  document.getElementById('tb-bpm').textContent = state.scene.bpm + ' BPM';
+  document.getElementById('tb-key').textContent = state.scene.key;
+  const genreLabel = state.scene.genre.replace(/-/g,' ').replace(/\b\w/g, c => c.toUpperCase());
+  document.getElementById('tb-genre').textContent = genreLabel;
+}
+
+// ─── STEP NAVIGATION ───
+function initStepNav() {
+  document.querySelectorAll('.nav-step').forEach(navItem => {
+    navItem.addEventListener('click', () => {
+      const step = navItem.dataset.step;
+      goToStep(step);
+    });
+  });
+}
+
+function goToStep(step) {
+  // Update nav
+  document.querySelectorAll('.nav-step').forEach(n => n.classList.remove('active'));
+  document.querySelector(`.nav-step[data-step="${step}"]`).classList.add('active');
+  // Mark previous steps as completed
+  const steps = ['scene','arrangement','drums','bass','melody','pads','export'];
+  const idx = steps.indexOf(step);
+  steps.forEach((s, i) => {
+    const nav = document.querySelector(`.nav-step[data-step="${s}"]`);
+    if (i < idx) nav.classList.add('completed');
+    else nav.classList.remove('completed');
+  });
+  // Show panel
+  document.querySelectorAll('.step-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById(`panel-${step}`).classList.add('active');
+  state.currentStep = step;
+
+  // Rebuild dynamic panels
+  if (step === 'arrangement') buildArrangementGrid();
+}
+
+// ─── ARRANGEMENT GRID ───
+function initArrangement() {
+  buildArrangementGrid();
+}
+
+function buildArrangementGrid() {
+  const sections = getSections(state.scene.length);
+  const sectionLabels = document.getElementById('section-labels');
+  const layerLabels = document.getElementById('layer-labels');
+  const grid = document.getElementById('arr-grid');
+
+  // Section headers
+  sectionLabels.innerHTML = sections.map(s =>
+    `<div class="arr-sec-label">${s}</div>`
+  ).join('');
+
+  // Layer labels
+  layerLabels.innerHTML = LAYERS.map(l =>
+    `<div class="arr-layer-lbl"><span class="arr-layer-dot" style="background:${l.color}"></span>${l.name}</div>`
+  ).join('');
+
+  // Grid cells
+  grid.innerHTML = LAYERS.map(layer =>
+    `<div class="arr-row">${sections.map((sec, si) => {
+      const key = `${layer.id}-${si}`;
+      const isActive = state.arrangement[key] !== false;
+      // Default: sensible arrangement
+      if (!(key in state.arrangement)) {
+        state.arrangement[key] = getDefaultArrangement(layer.id, si, sections.length);
+      }
+      return `<div class="arr-cell ${state.arrangement[key] ? 'active' : ''}" 
+                   data-layer="${layer.id}" data-section="${si}" 
+                   data-key="${key}"></div>`;
+    }).join('')}</div>`
+  ).join('');
+
+  // Click handlers
+  grid.querySelectorAll('.arr-cell').forEach(cell => {
+    cell.addEventListener('click', () => {
+      const key = cell.dataset.key;
+      state.arrangement[key] = !state.arrangement[key];
+      cell.classList.toggle('active');
+    });
+  });
+}
+
+function getDefaultArrangement(layer, secIdx, totalSections) {
+  // Smart defaults for melodic techno arrangement
+  const defaults = {
+    kick:  [1,1,1,0,1,1,1],   // out in breakdown
+    hats:  [0,1,1,0,1,1,0],   // not intro/outro
+    perc:  [0,1,1,0,1,1,0],
+    bass:  [0,1,1,1,1,1,0],   // bass in breakdown (sub)
+    lead:  [0,0,1,0,0,1,0],   // only drops
+    pad:   [1,1,0,1,1,0,1],   // atmosphere, not drops
+    fx:    [0,1,0,1,1,0,0],   // transitions
+  };
+  const pattern = defaults[layer] || [];
+  // Scale pattern to match section count
+  if (secIdx < pattern.length) return !!pattern[secIdx];
+  return false;
+}
+
+// ─── DRUM SEQUENCER ───
+function initSequencer() {
+  const seq = document.getElementById('drum-sequencer');
+  seq.innerHTML = DRUM_ROWS.map(row => {
+    const steps = Array.from({length:16}, (_, i) => {
+      const key = `${row.id}-${i}`;
+      const isBeat = i % 4 === 0;
+      return `<div class="seq-step ${isBeat ? 'beat-1' : ''}" data-row="${row.id}" data-step="${i}" data-key="${key}"></div>`;
+    }).join('');
+    return `<div class="seq-row"><div class="seq-label">${row.name}</div><div class="seq-steps">${steps}</div></div>`;
+  }).join('');
+
+  // Set default kick pattern (4 on floor)
+  [0,4,8,12].forEach(i => {
+    const el = seq.querySelector(`[data-row="kick"][data-step="${i}"]`);
+    if (el) { el.classList.add('active'); state.drums.pattern[`kick-${i}`] = true; }
+  });
+  // Default hats
+  [2,6,10,14].forEach(i => {
+    const el = seq.querySelector(`[data-row="chh"][data-step="${i}"]`);
+    if (el) { el.classList.add('active'); state.drums.pattern[`chh-${i}`] = true; }
+  });
+  // Default open hat
+  [4,12].forEach(i => {
+    const el = seq.querySelector(`[data-row="ohh"][data-step="${i}"]`);
+    if (el) { el.classList.add('active'); state.drums.pattern[`ohh-${i}`] = true; }
+  });
+
+  // Click to toggle
+  seq.querySelectorAll('.seq-step').forEach(step => {
+    step.addEventListener('click', () => {
+      step.classList.toggle('active');
+      const key = step.dataset.key;
+      state.drums.pattern[key] = step.classList.contains('active');
+    });
+  });
+}
+
+// ─── RANGE SLIDERS ───
+function initRangeSliders() {
+  document.querySelectorAll('.groove-row').forEach(row => {
+    const slider = row.querySelector('input[type=range]');
+    const val = row.querySelector('.range-val');
+    if (slider && val) {
+      slider.addEventListener('input', () => {
+        let display = slider.value;
+        if (slider.id && slider.id.includes('swing')) display += '%';
+        if (slider.id && slider.id.includes('humanise')) display += '%';
+        val.textContent = display;
+        // Update state
+        if (slider.id === 'drum-swing') state.drums.swing = parseInt(slider.value);
+        if (slider.id === 'drum-density') state.drums.density = parseInt(slider.value);
+        if (slider.id === 'drum-humanise') state.drums.humanise = parseInt(slider.value);
+        if (slider.id === 'bass-complexity') state.bass.complexity = parseInt(slider.value);
+        if (slider.id === 'bass-octave') state.bass.octave = parseInt(slider.value);
+        if (slider.id === 'melody-complexity') state.melody.complexity = parseInt(slider.value);
+        if (slider.id === 'melody-density') state.melody.density = parseInt(slider.value);
+      });
+    }
+  });
+}
+
+// ─── PANEL BUTTONS (NAVIGATION) ───
+function initPanelButtons() {
+  document.getElementById('scene-next')?.addEventListener('click', () => goToStep('arrangement'));
+  document.getElementById('arr-next')?.addEventListener('click', () => goToStep('drums'));
+  document.getElementById('drum-next')?.addEventListener('click', () => goToStep('bass'));
+  document.getElementById('bass-next')?.addEventListener('click', () => goToStep('melody'));
+  document.getElementById('melody-next')?.addEventListener('click', () => goToStep('pads'));
+  document.getElementById('pads-next')?.addEventListener('click', () => goToStep('export'));
+
+  // AI generate buttons
+  document.getElementById('arr-suggest')?.addEventListener('click', () => aiSuggestArrangement());
+  document.getElementById('drum-generate')?.addEventListener('click', () => aiGenerateDrums());
+  document.getElementById('bass-generate')?.addEventListener('click', () => aiGenerateBass());
+  document.getElementById('melody-generate')?.addEventListener('click', () => aiGenerateMelody());
+  document.getElementById('pads-generate')?.addEventListener('click', () => aiGeneratePads());
+
+  // Preview buttons
+  document.getElementById('drum-preview')?.addEventListener('click', () => previewDrums());
+  document.getElementById('bass-preview')?.addEventListener('click', () => previewBass());
+  document.getElementById('melody-preview')?.addEventListener('click', () => previewMelody());
+}
+
+// ─── AI CHAT ───
+function initAIChat() {
+  const input = document.getElementById('ai-input');
+  const sendBtn = document.getElementById('ai-send');
+  const messages = document.getElementById('ai-messages');
+
+  const send = () => {
+    const text = input.value.trim();
+    if (!text) return;
+    addMessage('user', text);
+    input.value = '';
+    // Process AI response
+    handleAIChat(text);
+  };
+
+  sendBtn.addEventListener('click', send);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') send();
+  });
+}
+
+function addMessage(role, text) {
+  const messages = document.getElementById('ai-messages');
+  const msg = document.createElement('div');
+  msg.className = `ai-msg ${role}`;
+  msg.innerHTML = `<div class="ai-msg-text">${text}</div>`;
+  messages.appendChild(msg);
+  messages.scrollTop = messages.scrollHeight;
+}
+
+async function handleAIChat(userMessage) {
+  addMessage('bot', '<em>Thinking...</em>');
+  try {
+    const context = {
+      scene: state.scene,
+      currentStep: state.currentStep,
+      arrangement: state.arrangement,
+      drums: state.drums,
+      bass: state.bass,
+      melody: state.melody,
+    };
+
+    // Call AI backend
+    if (typeof window.beatforge !== 'undefined') {
+      const result = await window.beatforge.ai.generate(userMessage, context);
+      // Remove thinking message
+      const msgs = document.getElementById('ai-messages');
+      msgs.removeChild(msgs.lastChild);
+      addMessage('bot', result.response || result.error || "Hmm, something went wrong. Try again.");
+    } else {
+      // Dev fallback — no Electron
+      const msgs = document.getElementById('ai-messages');
+      msgs.removeChild(msgs.lastChild);
+      addMessage('bot', "I'm running in browser mode — AI backend needs the Electron shell. But the UI is all here for you to play with. <em>You're welcome.</em>");
+    }
+  } catch(e) {
+    const msgs = document.getElementById('ai-messages');
+    msgs.removeChild(msgs.lastChild);
+    addMessage('bot', `Error: ${e.message}`);
+  }
+}
+
+// ─── AI GENERATION FUNCTIONS ───
+async function aiSuggestArrangement() {
+  addMessage('bot', "Generating an arrangement based on your scene settings... <em>Hold my beer.</em>");
+  
+  // For now — generate a smart default based on genre
+  const sections = getSections(state.scene.length);
+  const genre = state.scene.genre;
+  
+  // Genre-specific arrangements
+  const patterns = {
+    'melodic-techno': {
+      kick:  sections.map((s,i) => !s.includes('Intro') && !s.includes('Breakdown')),
+      hats:  sections.map((s,i) => !s.includes('Intro') && !s.includes('Outro') && !s.includes('Breakdown')),
+      perc:  sections.map((s,i) => s.includes('Drop') || s.includes('Build')),
+      bass:  sections.map((s,i) => !s.includes('Intro') && !s.includes('Outro')),
+      lead:  sections.map((s,i) => s.includes('Drop')),
+      pad:   sections.map((s,i) => s.includes('Intro') || s.includes('Breakdown') || s.includes('Outro') || s.includes('Build')),
+      fx:    sections.map((s,i) => s.includes('Build') || s.includes('Breakdown')),
+    },
+    'progressive-house': {
+      kick:  sections.map((s,i) => !s.includes('Breakdown')),
+      hats:  sections.map((s,i) => !s.includes('Intro') && !s.includes('Outro')),
+      perc:  sections.map((s,i) => s.includes('Drop') || s.includes('Build')),
+      bass:  sections.map((s,i) => !s.includes('Intro') && !s.includes('Outro')),
+      lead:  sections.map((s,i) => s.includes('Drop') || s.includes('Build')),
+      pad:   sections.map((s,i) => true),
+      fx:    sections.map((s,i) => s.includes('Build') || s.includes('Breakdown')),
+    }
+  };
+
+  const pattern = patterns[genre] || patterns['melodic-techno'];
+  
+  // Apply to state and rebuild grid
+  LAYERS.forEach(layer => {
+    sections.forEach((sec, si) => {
+      const key = `${layer.id}-${si}`;
+      state.arrangement[key] = pattern[layer.id] ? pattern[layer.id][si] : false;
+    });
+  });
+  
+  buildArrangementGrid();
+  
+  setTimeout(() => {
+    addMessage('bot', `Done. I've laid out a ${genre.replace(/-/g,' ')} arrangement — kick drops out in breakdowns, pads fill the atmosphere, lead only hits in the drops. Adjust anything you want. <em>That's how a ${state.scene.reference || 'proper'} track breathes.</em>`);
+  }, 800);
+}
+
+async function aiGenerateDrums() {
+  addMessage('bot', "Cooking up a drum pattern... <em>This is going to be magnificent.</em>");
+  
+  // Generate pattern based on style
+  const seq = document.getElementById('drum-sequencer');
+  
+  // Clear existing
+  seq.querySelectorAll('.seq-step').forEach(s => s.classList.remove('active'));
+  state.drums.pattern = {};
+  
+  const style = state.drums.style;
+  let patterns = {};
+  
+  if (style === 'rolling' || style === 'four-on-floor') {
+    patterns = {
+      kick:  [1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0],
+      snare: [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0],
+      chh:   [0,0,1,0, 0,0,1,0, 0,0,1,0, 0,0,1,0],
+      ohh:   [0,0,0,0, 0,0,0,1, 0,0,0,0, 0,0,0,1],
+      perc:  [0,0,0,1, 0,0,0,0, 0,0,0,1, 0,1,0,0],
+    };
+  } else if (style === 'breakbeat') {
+    patterns = {
+      kick:  [1,0,0,0, 0,0,1,0, 0,0,1,0, 0,0,0,0],
+      snare: [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,1],
+      chh:   [1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0],
+      ohh:   [0,0,0,0, 0,0,0,1, 0,0,0,0, 0,0,0,0],
+      perc:  [0,0,0,0, 0,0,0,0, 0,1,0,0, 0,0,1,0],
+    };
+  } else { // minimal
+    patterns = {
+      kick:  [1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0],
+      snare: [0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0],
+      chh:   [0,0,1,0, 0,0,1,0, 0,0,1,0, 0,0,1,0],
+      ohh:   [0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0],
+      perc:  [0,0,0,0, 0,0,0,0, 0,0,0,1, 0,0,0,0],
+    };
+  }
+  
+  // Add swing/humanise variation
+  const density = state.drums.density;
+  if (density > 6) {
+    // Add extra ghost notes on hats
+    [1,3,5,7,9,11,13,15].forEach(i => {
+      if (Math.random() < (density - 5) * 0.15) patterns.chh[i] = 1;
+    });
+  }
+  
+  // Apply to sequencer
+  Object.entries(patterns).forEach(([row, steps]) => {
+    steps.forEach((on, i) => {
+      if (on) {
+        const el = seq.querySelector(`[data-row="${row}"][data-step="${i}"]`);
+        if (el) { el.classList.add('active'); state.drums.pattern[`${row}-${i}`] = true; }
+      }
+    });
+  });
+  
+  setTimeout(() => {
+    addMessage('bot', `${style.replace(/-/g,' ')} pattern loaded. Kick on all four, hats are offset, perc adds movement. Tweak any step by clicking. <em>Now THAT's a groove.</em>`);
+  }, 600);
+}
+
+async function aiGenerateBass() {
+  addMessage('bot', "Writing a bassline around your drums... <em>This is the fun part.</em>");
+  
+  const key = state.scene.key;
+  const style = state.bass.style;
+  const complexity = state.bass.complexity;
+  
+  // Generate bass notes based on key and style
+  const root = getNoteNumber(key);
+  const scale = getScale(key);
+  
+  let notes = [];
+  const barLength = 16; // 16th notes per bar
+  
+  if (style === 'rolling-sub') {
+    // Simple rolling sub — root note on kick hits
+    notes = [
+      { note: root, time: 0, duration: 3, velocity: 110 },
+      { note: root, time: 4, duration: 3, velocity: 100 },
+      { note: root, time: 8, duration: 3, velocity: 110 },
+      { note: root, time: 12, duration: 3, velocity: 100 },
+    ];
+    if (complexity > 5) {
+      notes.push({ note: scale[4], time: 6, duration: 1, velocity: 80 });
+      notes.push({ note: scale[3], time: 14, duration: 1, velocity: 75 });
+    }
+  } else if (style === 'acid') {
+    notes = scale.slice(0,5).map((n, i) => ({
+      note: n, time: i * 3, duration: 2, velocity: 90 + Math.random() * 20
+    }));
+  } else {
+    // Pluck/Reese/FM — arpeggiated
+    for (let i = 0; i < barLength; i += (11 - complexity)) {
+      const scaleIdx = Math.floor(Math.random() * Math.min(complexity, scale.length));
+      notes.push({ note: scale[scaleIdx], time: i, duration: 2, velocity: 85 + Math.random() * 25 });
+    }
+  }
+  
+  state.bass.notes = notes;
+  renderPianoRoll('bass-pianoroll', notes, root - 12, root + 12);
+  
+  setTimeout(() => {
+    addMessage('bot', `${style.replace(/-/g,' ')} bassline in ${key}. ${notes.length} notes, sits right under your kick pattern. <em>You can feel that low end already.</em>`);
+  }, 600);
+}
+
+async function aiGenerateMelody() {
+  addMessage('bot', "Composing a melody that fits around everything... <em>Oh for— this is going to be good.</em>");
+  
+  const key = state.scene.key;
+  const scale = getScale(key);
+  const root = getNoteNumber(key);
+  const complexity = state.melody.complexity;
+  const density = state.melody.density;
+  
+  let notes = [];
+  const octaveUp = scale.map(n => n + 12);
+  const allNotes = [...scale, ...octaveUp];
+  
+  const style = state.melody.style;
+  
+  if (style === 'arp') {
+    // Arpeggiated — cycling through scale tones
+    const pattern = [0, 2, 4, 2, 0, 3, 4, 3]; // Scale degree pattern
+    for (let i = 0; i < 16; i++) {
+      if (i % Math.max(1, 4 - Math.floor(density/3)) === 0) {
+        const deg = pattern[i % pattern.length];
+        notes.push({
+          note: allNotes[deg % allNotes.length],
+          time: i,
+          duration: Math.max(1, 3 - Math.floor(density/4)),
+          velocity: 80 + Math.random() * 30
+        });
+      }
+    }
+  } else if (style === 'lead') {
+    // Lead line — longer notes, more melodic
+    let pos = 0;
+    let prevDeg = 0;
+    while (pos < 16) {
+      const dur = 2 + Math.floor(Math.random() * 3);
+      const deg = prevDeg + Math.floor(Math.random() * 3) - 1;
+      const clampedDeg = Math.max(0, Math.min(allNotes.length - 1, deg));
+      notes.push({
+        note: allNotes[clampedDeg],
+        time: pos,
+        duration: dur,
+        velocity: 85 + Math.random() * 25
+      });
+      prevDeg = clampedDeg;
+      pos += dur + (density < 5 ? 1 : 0);
+    }
+  } else {
+    // Stab / pluck / vocal chop — rhythmic hits
+    [0, 3, 6, 8, 11, 14].forEach(t => {
+      if (Math.random() < density * 0.12) {
+        const deg = Math.floor(Math.random() * 5);
+        notes.push({
+          note: allNotes[deg],
+          time: t,
+          duration: 1,
+          velocity: 90 + Math.random() * 20
+        });
+      }
+    });
+  }
+  
+  state.melody.notes = notes;
+  renderPianoRoll('melody-pianoroll', notes, root, root + 24);
+  
+  setTimeout(() => {
+    addMessage('bot', `${style} melody in ${key}. ${notes.length} notes, designed to sit above your bass without clashing. <em>That's a hook right there.</em>`);
+  }, 600);
+}
+
+async function aiGeneratePads() {
+  addMessage('bot', "Building the atmosphere...");
+  
+  const key = state.scene.key;
+  const scale = getScale(key);
+  const root = getNoteNumber(key);
+  
+  // Pads are sustained chords
+  const notes = [
+    { note: scale[0] + 12, time: 0, duration: 8, velocity: 60 },
+    { note: scale[2] + 12, time: 0, duration: 8, velocity: 55 },
+    { note: scale[4] + 12, time: 0, duration: 8, velocity: 55 },
+    { note: scale[0] + 12, time: 8, duration: 8, velocity: 60 },
+    { note: scale[3] + 12, time: 8, duration: 8, velocity: 55 },
+    { note: scale[4] + 12, time: 8, duration: 8, velocity: 50 },
+  ];
+  
+  state.pads.notes = notes;
+  renderPianoRoll('pads-pianoroll', notes, root + 6, root + 30);
+  
+  setTimeout(() => {
+    addMessage('bot', `Warm pad chords in ${key}. Long sustained notes that breathe underneath everything. <em>Now THAT's an atmosphere.</em>`);
+  }, 500);
+}
+
+// ─── PIANO ROLL RENDERER ───
+function renderPianoRoll(containerId, notes, minNote, maxNote) {
+  const container = document.getElementById(containerId);
+  container.innerHTML = '';
+  
+  const range = maxNote - minNote;
+  const width = container.clientWidth || 600;
+  const height = container.clientHeight || 180;
+  const totalSteps = 16;
+  
+  notes.forEach(n => {
+    const el = document.createElement('div');
+    el.className = 'pr-note';
+    const x = (n.time / totalSteps) * width;
+    const w = (n.duration / totalSteps) * width;
+    const y = height - ((n.note - minNote) / range) * height;
+    el.style.left = x + 'px';
+    el.style.width = Math.max(4, w) + 'px';
+    el.style.top = Math.max(0, Math.min(height - 10, y)) + 'px';
+    el.style.opacity = (n.velocity || 100) / 127;
+    container.appendChild(el);
+  });
+}
+
+// ─── MUSIC THEORY HELPERS ───
+function getNoteNumber(key) {
+  const map = {'C':48,'D':50,'E':52,'F':53,'G':55,'A':57,'B':59,
+    'Am':45,'Bm':47,'Cm':48,'Dm':50,'Em':52,'Fm':53,'Gm':55,'Bbm':46};
+  return map[key] || 48;
+}
+
+function getScale(key) {
+  const root = getNoteNumber(key);
+  const isMinor = key.includes('m');
+  const intervals = isMinor 
+    ? [0,2,3,5,7,8,10] // Natural minor
+    : [0,2,4,5,7,9,11]; // Major
+  return intervals.map(i => root + i);
+}
+
+// ─── PREVIEW (USING TONE.JS OR WEB AUDIO) ───
+function previewDrums() {
+  addMessage('bot', "Preview requires the Tone.js audio engine — coming in next update. For now, send it to your DAW! <em>That's where the real magic happens anyway.</em>");
+}
+
+function previewBass() { previewDrums(); }
+function previewMelody() { previewDrums(); }
