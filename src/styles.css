@@ -855,3 +855,38 @@ html, body { height:100%; background:var(--bg); color:var(--text); font-family:'
   transition: color 0.15s;
 }
 .update-dismiss-btn:hover { color: var(--text-primary); }
+
+/* ── TRACK LENGTH FREE INPUT ── */
+.track-length-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.track-length-input {
+  width: 72px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 1.4rem;
+  font-weight: 700;
+  text-align: center;
+  padding: 0.4rem 0.5rem;
+  outline: none;
+  transition: border-color 0.2s;
+  -moz-appearance: textfield;
+}
+.track-length-input::-webkit-outer-spin-button,
+.track-length-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.track-length-input:focus {
+  border-color: var(--gold);
+}
+.track-length-label {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+.track-length-hint {
+  font-size: 0.72rem;
+  color: rgba(201,168,76,0.6);
+  margin-left: 0.3rem;
+}

@@ -54,6 +54,7 @@ const DRUM_ROWS = [
 // ─── INIT ───
 document.addEventListener('DOMContentLoaded', () => {
   initChips();
+  initTrackLengthInput();
   initBPM();
   initStepNav();
   initArrangement();
@@ -65,6 +66,32 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ─── CHIP BUTTONS ───
+function initTrackLengthInput() {
+  const input = document.getElementById('track-length-input');
+  const hint  = document.getElementById('track-length-hint');
+  if (!input) return;
+
+  function updateHint(mins) {
+    const bpm = state.scene.bpm || 125;
+    const sections = getSections(String(mins));
+    const barsPerSec = getBarsPerSection(bpm, mins, sections.length);
+    hint.textContent = `→ ${sections.length} sections · ~${barsPerSec} bars each`;
+  }
+
+  // Set initial state
+  state.scene.length = String(input.value);
+  updateHint(parseFloat(input.value));
+
+  input.addEventListener('input', () => {
+    const v = Math.max(1, Math.min(60, parseFloat(input.value) || 6));
+    state.scene.length = String(v);
+    updateHint(v);
+    // Update toolbar if visible
+    const tb = document.getElementById('tb-bpm');
+    if (tb) updateToolbar();
+  });
+}
+
 function initChips() {
   document.querySelectorAll('.chip-group').forEach(group => {
     const isMulti = group.classList.contains('multi');
@@ -883,7 +910,8 @@ function exportDrumMidi() {
     addMessage('bot', "Your drum pattern is empty! Toggle some steps on the sequencer first. <em>Even I can't export silence.</em>");
     return;
   }
-  const bars = 2;
+  const totalMins = parseFloat(state.scene.length) || 6;
+  const bars = Math.max(4, Math.round((totalMins * state.scene.bpm) / 4));
   const midi = buildDrumMidi(state.drums.pattern, state.scene.bpm, bars);
   const filename = `BeatForge_Drums_${state.scene.bpm}bpm_${bars}bars.mid`;
   downloadMidi(midi, filename);
@@ -1295,12 +1323,7 @@ function getDrumColour(rowId) {
   return map[rowId] || '#888';
 }
 
-// Patch initDragCards to also init the drum toggle
-const _origInitDragCards = initDragCards;
-function initDragCards() {
-  _origInitDragCards();
-  initDrumExportToggle();
-}
+// initDrumExportToggle is called directly inside initDragCards below
 
 // Patch drag behaviour — if split mode, intercept and save instead
 const _origDragStart = HTMLElement.prototype.addEventListener;
@@ -1535,10 +1558,10 @@ const LAYER_META = {
 
 // ── Main arrangement export ──
 async function exportArrangement() {
-  const sections = getSections(state.scene.length);
-  const bpm      = state.scene.bpm;
-  const key      = state.scene.key;
-  const bars     = 2; // each section uses the 2-bar loop
+  const sections  = getSections(state.scene.length);
+  const bpm       = state.scene.bpm;
+  const key       = state.scene.key;
+  const bars      = getBarsPerSection(bpm, parseFloat(state.scene.length) || 6, sections.length);
 
   const layers = ['drums','bass','melody','pads'].filter(l => hasLayerData(l));
 

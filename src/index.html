@@ -136,11 +136,11 @@
             <!-- Track Length -->
             <div class="scene-card">
               <label class="sc-label">Track Length</label>
-              <div class="chip-group" data-field="length">
-                <button class="chip" data-val="4min">4 min</button>
-                <button class="chip active" data-val="6min">6 min</button>
-                <button class="chip" data-val="8min">8 min</button>
-                <button class="chip" data-val="10min">10 min</button>
+              <div class="track-length-input-wrap">
+                <input type="number" id="track-length-input" class="track-length-input"
+                  min="1" max="60" value="6" step="1" />
+                <span class="track-length-label">minutes</span>
+                <span class="track-length-hint" id="track-length-hint"></span>
               </div>
             </div>
             <!-- Reference -->
