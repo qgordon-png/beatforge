@@ -944,3 +944,164 @@ function exportFullMidiPack() {
   addMessage('bot', `Exported ${exported.length} MIDI files: <strong>${exported.join(', ')}</strong>. Drop each one onto a separate channel in Ableton. Drums → Drum Rack. Everything else → your synth of choice. <em>Now go make something ridiculous.</em>`);
 }
 
+
+// ═══════════════════════════════════════════════
+// DRAG-TO-DAW ENGINE
+// In Electron: uses native OS file drag (ipcRenderer → main → startDrag)
+// Fallback: browser blob download
+// ═══════════════════════════════════════════════
+
+function isElectron() {
+  return typeof window !== 'undefined' && window.beatforge && window.beatforge.app && window.beatforge.app.isElectron;
+}
+
+// Generate MIDI bytes for a given layer
+function getMidiForLayer(layer) {
+  const bpm = state.scene.bpm;
+  const key = state.scene.key;
+  switch (layer) {
+    case 'drums':
+      return { bytes: buildDrumMidi(state.drums.pattern, bpm, 2), filename: `BeatForge_Drums_${bpm}bpm.mid` };
+    case 'bass':
+      return state.bass.notes.length
+        ? { bytes: buildNotesMidi(state.bass.notes, 0, bpm, 'BeatForge Bass'), filename: `BeatForge_Bass_${key}.mid` }
+        : null;
+    case 'melody':
+      return state.melody.notes.length
+        ? { bytes: buildNotesMidi(state.melody.notes, 1, bpm, 'BeatForge Melody'), filename: `BeatForge_Melody_${key}.mid` }
+        : null;
+    case 'pads':
+      return state.pads.notes.length
+        ? { bytes: buildNotesMidi(state.pads.notes, 2, bpm, 'BeatForge Pads'), filename: `BeatForge_Pads_${key}.mid` }
+        : null;
+    default:
+      return null;
+  }
+}
+
+function hasLayerData(layer) {
+  if (layer === 'drums') return Object.values(state.drums.pattern).some(v => v);
+  if (layer === 'bass') return state.bass.notes.length > 0;
+  if (layer === 'melody') return state.melody.notes.length > 0;
+  if (layer === 'pads') return state.pads.notes.length > 0;
+  return false;
+}
+
+// ── Drag cards setup ──
+function initDragCards() {
+  const cards = document.querySelectorAll('.drag-card');
+
+  cards.forEach(card => {
+    const layer = card.dataset.layer;
+
+    // Update card visual state
+    updateCardState(card, layer);
+
+    // Native drag (Electron)
+    card.addEventListener('dragstart', (e) => {
+      if (!hasLayerData(layer)) {
+        e.preventDefault();
+        pulseCard(card, 'empty');
+        return;
+      }
+      const midi = getMidiForLayer(layer);
+      if (!midi) { e.preventDefault(); return; }
+
+      card.classList.add('dragging');
+
+      if (isElectron()) {
+        // Tell main process to write temp file + start native OS drag
+        e.preventDefault(); // suppress browser drag, we use native
+        window.beatforge.midi.startDrag(midi.filename, Array.from(midi.bytes));
+      } else {
+        // Browser fallback: set drag data (won't open in Ableton but at least something happens)
+        e.dataTransfer.effectAllowed = 'copy';
+        e.dataTransfer.setData('text/plain', midi.filename);
+      }
+    });
+
+    card.addEventListener('dragend', () => {
+      card.classList.remove('dragging');
+    });
+
+    // Make card draggable
+    card.setAttribute('draggable', 'true');
+
+    // Save button (⬇)
+    const saveBtn = card.querySelector('.drag-card-save');
+    if (saveBtn) {
+      saveBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        saveMidiLayer(layer, card);
+      });
+    }
+  });
+
+  // Update key labels
+  updateExportKeyLabels();
+}
+
+function updateCardState(card, layer) {
+  const hasData = hasLayerData(layer);
+  if (hasData) {
+    card.classList.remove('card-empty');
+    card.classList.add('card-ready');
+  } else {
+    card.classList.remove('card-ready');
+    card.classList.add('card-empty');
+  }
+}
+
+function pulseCard(card, type) {
+  card.classList.add(`pulse-${type}`);
+  setTimeout(() => card.classList.remove(`pulse-${type}`), 800);
+}
+
+async function saveMidiLayer(layer, card) {
+  if (!hasLayerData(layer)) {
+    pulseCard(card, 'empty');
+    addMessage('bot', `No ${layer} data yet — generate the ${layer} pattern first!`);
+    return;
+  }
+
+  const midi = getMidiForLayer(layer);
+  if (!midi) return;
+
+  if (isElectron()) {
+    // Use native save dialog
+    const result = await window.beatforge.midi.save(midi.filename, Array.from(midi.bytes));
+    if (result && result.saved) {
+      pulseCard(card, 'saved');
+      addMessage('bot', `${layer.charAt(0).toUpperCase() + layer.slice(1)} saved → <strong>${result.path}</strong>. <em>You're welcome.</em>`);
+    }
+  } else {
+    // Browser download fallback
+    downloadMidi(midi.bytes, midi.filename);
+    pulseCard(card, 'saved');
+  }
+}
+
+function updateExportKeyLabels() {
+  const key = state.scene.key;
+  ['bass','melody','pads'].forEach(id => {
+    const el = document.getElementById(`exp-key-${id}`);
+    if (el) el.textContent = key;
+  });
+}
+
+// Refresh drag cards whenever export panel is opened
+const _origGoToStep = goToStep;
+function goToStep(step) {
+  _origGoToStep(step);
+  if (step === 'export') {
+    setTimeout(() => {
+      initDragCards();
+      // Also refresh card states if navigated back
+      document.querySelectorAll('.drag-card').forEach(c => updateCardState(c, c.dataset.layer));
+    }, 50);
+  }
+}
+
+// Also re-export the function so it isn't shadowed
+window._goToStep = goToStep;
+

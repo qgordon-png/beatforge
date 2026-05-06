@@ -1,18 +1,23 @@
-const { contextBridge, ipcMain } = require('electron');
+const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('beatforge', {
   // MIDI API
   midi: {
-    listOutputs: () => ipcMain.invoke('midi:listOutputs'),
-    sendNote: (params) => ipcMain.invoke('midi:sendNote', params),
-    sendPattern: (params) => ipcMain.invoke('midi:sendPattern', params),
+    listOutputs: () => ipcRenderer.invoke('midi:listOutputs'),
+    sendNote: (params) => ipcRenderer.invoke('midi:sendNote', params),
+    sendPattern: (params) => ipcRenderer.invoke('midi:sendPattern', params),
+    // Native drag — sends bytes to main process which writes temp file + triggers OS drag
+    startDrag: (filename, midiBytes) => ipcRenderer.send('midi:startDrag', { filename, midiBytes }),
+    // Save dialog fallback
+    save: (filename, midiBytes) => ipcRenderer.invoke('midi:save', { filename, midiBytes }),
   },
   // AI API
   ai: {
-    generate: (prompt, context) => ipcMain.invoke('ai:generate', { prompt, context }),
+    generate: (prompt, context) => ipcRenderer.invoke('ai:generate', { prompt, context }),
   },
   // App info
   app: {
     getVersion: () => '0.1.0',
+    isElectron: true,
   }
 });

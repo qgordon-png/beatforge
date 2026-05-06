@@ -498,3 +498,172 @@ html, body { height:100%; background:var(--bg); color:var(--text); font-family:'
   background: rgba(201,168,76,0.2);
   border-color: var(--gold);
 }
+
+/* ── DRAG CARDS ── */
+.export-pack-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+.btn-pack {
+  padding: 0.6rem 1.4rem;
+  font-size: 0.85rem;
+}
+.pack-hint {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.drag-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.drag-card {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.2rem 1rem 1rem;
+  cursor: grab;
+  overflow: hidden;
+  transition: border-color 0.2s, transform 0.15s, box-shadow 0.2s;
+  user-select: none;
+}
+.drag-card:hover {
+  border-color: rgba(201,168,76,0.4);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+.drag-card.dragging {
+  opacity: 0.55;
+  cursor: grabbing;
+  transform: scale(0.97);
+}
+.drag-card.card-empty {
+  opacity: 0.45;
+  filter: grayscale(0.6);
+}
+.drag-card.card-empty:hover {
+  border-color: rgba(255,255,255,0.1);
+  transform: none;
+  box-shadow: none;
+}
+.drag-card.card-ready {
+  opacity: 1;
+}
+
+/* Colour glow strip at top */
+.drag-card-glow {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: var(--glow);
+  border-radius: 12px 12px 0 0;
+}
+
+.drag-card-top {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+.drag-card-icon { font-size: 1.3rem; }
+.drag-card-label {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  flex: 1;
+}
+.drag-card-ext {
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--gold);
+  background: rgba(201,168,76,0.12);
+  border: 1px solid rgba(201,168,76,0.25);
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  letter-spacing: 0.05em;
+}
+.drag-card-sub {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-bottom: 0.2rem;
+}
+.drag-key-label {
+  color: var(--gold);
+  font-weight: 600;
+}
+.drag-card-map {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  font-family: monospace;
+  margin-bottom: 0.8rem;
+}
+
+.drag-card-handle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  border-top: 1px solid var(--border);
+  padding-top: 0.6rem;
+  margin-top: 0.4rem;
+  letter-spacing: 0.03em;
+}
+.drag-handle-icon {
+  font-size: 1rem;
+  color: rgba(201,168,76,0.5);
+  letter-spacing: -1px;
+}
+.drag-card:hover .drag-card-handle {
+  color: rgba(201,168,76,0.7);
+}
+.drag-card:hover .drag-handle-icon {
+  color: var(--gold);
+}
+
+/* Save button (⬇) - bottom right */
+.drag-card-save {
+  position: absolute;
+  bottom: 0.7rem;
+  right: 0.7rem;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.1);
+  color: var(--text-muted);
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+.drag-card-save:hover {
+  background: rgba(201,168,76,0.15);
+  border-color: rgba(201,168,76,0.4);
+  color: var(--gold);
+}
+
+/* Pulse animations */
+@keyframes pulseEmpty {
+  0%,100% { border-color: var(--border); }
+  50% { border-color: rgba(255,80,80,0.5); box-shadow: 0 0 12px rgba(255,80,80,0.2); }
+}
+@keyframes pulseSaved {
+  0%,100% { border-color: var(--border); }
+  50% { border-color: rgba(100,255,150,0.6); box-shadow: 0 0 16px rgba(100,255,150,0.2); }
+}
+.drag-card.pulse-empty { animation: pulseEmpty 0.8s ease; }
+.drag-card.pulse-saved { animation: pulseSaved 0.8s ease; }
+
+/* Responsive */
+@media (max-width: 900px) {
+  .drag-cards-grid { grid-template-columns: repeat(2, 1fr); }
+}

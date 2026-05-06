@@ -1,5 +1,7 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, nativeImage } = require('electron');
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
 
 let mainWindow;
 
@@ -26,7 +28,6 @@ function createWindow() {
 
   mainWindow.loadFile('src/index.html');
 
-  // Open DevTools in dev mode
   if (process.argv.includes('--dev')) {
     mainWindow.webContents.openDevTools();
   }
@@ -42,9 +43,7 @@ app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
 
-// ─── IPC HANDLERS ───
-
-// MIDI output list
+// ─── IPC: MIDI OUTPUTS ───
 ipcMain.handle('midi:listOutputs', async () => {
   try {
     const JZZ = require('jzz');
@@ -55,7 +54,7 @@ ipcMain.handle('midi:listOutputs', async () => {
   }
 });
 
-// Send MIDI note
+// ─── IPC: SEND MIDI NOTE ───
 ipcMain.handle('midi:sendNote', async (event, { output, channel, note, velocity, duration }) => {
   try {
     const JZZ = require('jzz');
@@ -68,7 +67,7 @@ ipcMain.handle('midi:sendNote', async (event, { output, channel, note, velocity,
   }
 });
 
-// Send full MIDI pattern
+// ─── IPC: SEND MIDI PATTERN ───
 ipcMain.handle('midi:sendPattern', async (event, { output, channel, notes }) => {
   try {
     const JZZ = require('jzz');
@@ -85,7 +84,48 @@ ipcMain.handle('midi:sendPattern', async (event, { output, channel, notes }) => 
   }
 });
 
-// AI generation call (proxied through Base44)
+// ─── IPC: NATIVE FILE DRAG ───
+// Renderer sends MIDI bytes + filename → we write to temp dir → trigger OS native drag
+ipcMain.on('midi:startDrag', (event, { filename, midiBytes }) => {
+  try {
+    const tmpDir = path.join(os.tmpdir(), 'beatforge_midi');
+    if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+
+    const filePath = path.join(tmpDir, filename);
+    fs.writeFileSync(filePath, Buffer.from(midiBytes));
+
+    // Build a small drag icon
+    const icon = nativeImage.createFromDataURL(
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAA' +
+      'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' +
+      'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+    );
+
+    event.sender.startDrag({ file: filePath, icon });
+  } catch (e) {
+    console.error('Drag error:', e);
+  }
+});
+
+// ─── IPC: SAVE MIDI FILE (fallback download) ───
+ipcMain.handle('midi:save', async (event, { filename, midiBytes }) => {
+  try {
+    const { dialog } = require('electron');
+    const result = await dialog.showSaveDialog(mainWindow, {
+      defaultPath: filename,
+      filters: [{ name: 'MIDI Files', extensions: ['mid'] }]
+    });
+    if (!result.canceled && result.filePath) {
+      fs.writeFileSync(result.filePath, Buffer.from(midiBytes));
+      return { saved: true, path: result.filePath };
+    }
+    return { saved: false };
+  } catch (e) {
+    return { saved: false, error: e.message };
+  }
+});
+
+// ─── IPC: AI GENERATION ───
 ipcMain.handle('ai:generate', async (event, { prompt, context }) => {
   try {
     const response = await fetch('https://69bef4dcb0f4d4940e8dea6d.base44.app/api/functions/beatforgeAI', {

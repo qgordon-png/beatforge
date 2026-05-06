@@ -394,69 +394,89 @@
         </section>
 
         <!-- ─── STEP 7: EXPORT ─── -->
+        <!-- ─── STEP 7: EXPORT ─── -->
         <section class="step-panel" id="panel-export">
           <div class="panel-header">
-            <h2>Export Your Track</h2>
-            <p class="panel-desc">Download MIDI files and drop them into Ableton. One file per layer.</p>
+            <h2>Export to DAW</h2>
+            <p class="panel-desc">Drag any card directly into Ableton — or click ⬇ to save the file.</p>
           </div>
 
-          <div class="export-grid">
-            <div class="export-card export-card--featured">
-              <div class="export-icon">📦</div>
-              <h4>Export Full MIDI Pack</h4>
-              <p>Downloads all generated layers as separate .mid files in one go.</p>
-              <button class="btn-gold" id="export-midi">⬇ Export All MIDI Files</button>
-            </div>
+          <!-- Full pack button -->
+          <div class="export-pack-row">
+            <button class="btn-gold btn-pack" id="export-midi">📦 Save Full MIDI Pack</button>
+            <span class="pack-hint">Saves all generated layers at once</span>
           </div>
 
-          <div class="export-layers">
-            <h3 class="export-layers-title">Export Individual Layers</h3>
-            <div class="export-layer-grid">
+          <!-- Drag cards grid -->
+          <div class="drag-cards-grid">
 
-              <div class="export-layer-card">
-                <div class="export-layer-icon" style="background:rgba(255,82,82,0.15)">🥁</div>
-                <div class="export-layer-info">
-                  <strong>Drums</strong>
-                  <p>16-step pattern → Drum Rack<br><span class="note-map">Kick=C1 · Snare=D1 · CHH=F#1 · OHH=A#1 · Perc=D2</span></p>
-                </div>
-                <button class="btn-export-layer" id="export-drums-midi">⬇ .mid</button>
+            <div class="drag-card" id="drag-card-drums" data-layer="drums">
+              <div class="drag-card-glow" style="--glow:rgba(255,82,82,0.4)"></div>
+              <div class="drag-card-top">
+                <span class="drag-card-icon">🥁</span>
+                <span class="drag-card-label">Drums</span>
+                <span class="drag-card-ext">.mid</span>
               </div>
-
-              <div class="export-layer-card">
-                <div class="export-layer-icon" style="background:rgba(107,179,255,0.15)">🎸</div>
-                <div class="export-layer-info">
-                  <strong>Bass</strong>
-                  <p>Bassline in <span id="exp-key-bass">–</span> → any synth channel</p>
-                </div>
-                <button class="btn-export-layer" id="export-bass-midi">⬇ .mid</button>
+              <div class="drag-card-sub">Drum Rack · Ch10</div>
+              <div class="drag-card-map">C1 · D1 · F#1 · A#1 · D2</div>
+              <div class="drag-card-handle">
+                <span class="drag-handle-icon">⠿</span> drag to Ableton
               </div>
-
-              <div class="export-layer-card">
-                <div class="export-layer-icon" style="background:rgba(201,168,76,0.15)">🎹</div>
-                <div class="export-layer-info">
-                  <strong>Melody</strong>
-                  <p>Lead/arp in <span id="exp-key-melody">–</span> → any synth channel</p>
-                </div>
-                <button class="btn-export-layer" id="export-melody-midi">⬇ .mid</button>
-              </div>
-
-              <div class="export-layer-card">
-                <div class="export-layer-icon" style="background:rgba(170,107,255,0.15)">🌊</div>
-                <div class="export-layer-info">
-                  <strong>Pads</strong>
-                  <p>Chords in <span id="exp-key-pads">–</span> → pad/atmosphere channel</p>
-                </div>
-                <button class="btn-export-layer" id="export-pads-midi">⬇ .mid</button>
-              </div>
-
+              <button class="drag-card-save" id="export-drums-midi" title="Save file">⬇</button>
             </div>
+
+            <div class="drag-card" id="drag-card-bass" data-layer="bass">
+              <div class="drag-card-glow" style="--glow:rgba(107,179,255,0.4)"></div>
+              <div class="drag-card-top">
+                <span class="drag-card-icon">🎸</span>
+                <span class="drag-card-label">Bass</span>
+                <span class="drag-card-ext">.mid</span>
+              </div>
+              <div class="drag-card-sub">Ch1 · <span class="drag-key-label" id="exp-key-bass">–</span></div>
+              <div class="drag-card-map">Drop onto your sub synth</div>
+              <div class="drag-card-handle">
+                <span class="drag-handle-icon">⠿</span> drag to Ableton
+              </div>
+              <button class="drag-card-save" id="export-bass-midi" title="Save file">⬇</button>
+            </div>
+
+            <div class="drag-card" id="drag-card-melody" data-layer="melody">
+              <div class="drag-card-glow" style="--glow:rgba(201,168,76,0.4)"></div>
+              <div class="drag-card-top">
+                <span class="drag-card-icon">🎹</span>
+                <span class="drag-card-label">Melody</span>
+                <span class="drag-card-ext">.mid</span>
+              </div>
+              <div class="drag-card-sub">Ch2 · <span class="drag-key-label" id="exp-key-melody">–</span></div>
+              <div class="drag-card-map">Drop onto your lead synth</div>
+              <div class="drag-card-handle">
+                <span class="drag-handle-icon">⠿</span> drag to Ableton
+              </div>
+              <button class="drag-card-save" id="export-melody-midi" title="Save file">⬇</button>
+            </div>
+
+            <div class="drag-card" id="drag-card-pads" data-layer="pads">
+              <div class="drag-card-glow" style="--glow:rgba(170,107,255,0.4)"></div>
+              <div class="drag-card-top">
+                <span class="drag-card-icon">🌊</span>
+                <span class="drag-card-label">Pads</span>
+                <span class="drag-card-ext">.mid</span>
+              </div>
+              <div class="drag-card-sub">Ch3 · <span class="drag-key-label" id="exp-key-pads">–</span></div>
+              <div class="drag-card-map">Drop onto your pad/atmos synth</div>
+              <div class="drag-card-handle">
+                <span class="drag-handle-icon">⠿</span> drag to Ableton
+              </div>
+              <button class="drag-card-save" id="export-pads-midi" title="Save file">⬇</button>
+            </div>
+
           </div>
 
           <div class="export-ableton-tip">
             <span class="tip-icon">💡</span>
             <div>
-              <strong>Ableton tip:</strong> Drop the drums .mid onto a MIDI track with a Drum Rack loaded.
-              Each row maps to a standard pad slot. Bass, melody and pads drop onto Instrument Rack channels — tune your synth to taste.
+              <strong>How to drag:</strong> Click and hold a card, then drag it into an Ableton MIDI track.
+              Drums need a <strong>Drum Rack</strong> instrument loaded. Everything else → any synth.
             </div>
           </div>
         </section>
