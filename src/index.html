@@ -249,6 +249,7 @@
           <div class="panel-actions">
             <button class="btn-ghost" id="drum-generate">⚡ AI Generate Pattern</button>
             <button class="btn-play" id="drum-preview">▶ Preview</button>
+            <button class="btn-export-inline" id="export-drums-midi-quick">⬇ Export Drums .mid</button>
             <button class="btn-midi" id="drum-to-midi">🎹 Send to DAW</button>
             <button class="btn-next" id="drum-next">Lock Drums → Build Bass</button>
           </div>
@@ -396,27 +397,66 @@
         <section class="step-panel" id="panel-export">
           <div class="panel-header">
             <h2>Export Your Track</h2>
-            <p class="panel-desc">Send everything to your DAW or export as MIDI files.</p>
+            <p class="panel-desc">Download MIDI files and drop them into Ableton. One file per layer.</p>
           </div>
 
           <div class="export-grid">
-            <div class="export-card">
-              <div class="export-icon">🎹</div>
-              <h4>Send All to DAW</h4>
-              <p>Fire every layer into Ableton via LoopMIDI — one channel per layer.</p>
-              <button class="btn-gold" id="export-daw">Send to DAW</button>
+            <div class="export-card export-card--featured">
+              <div class="export-icon">📦</div>
+              <h4>Export Full MIDI Pack</h4>
+              <p>Downloads all generated layers as separate .mid files in one go.</p>
+              <button class="btn-gold" id="export-midi">⬇ Export All MIDI Files</button>
             </div>
-            <div class="export-card">
-              <div class="export-icon">📁</div>
-              <h4>Export MIDI Files</h4>
-              <p>Save individual .mid files per layer. Drag into any DAW.</p>
-              <button class="btn-gold" id="export-midi">Export MIDI Pack</button>
+          </div>
+
+          <div class="export-layers">
+            <h3 class="export-layers-title">Export Individual Layers</h3>
+            <div class="export-layer-grid">
+
+              <div class="export-layer-card">
+                <div class="export-layer-icon" style="background:rgba(255,82,82,0.15)">🥁</div>
+                <div class="export-layer-info">
+                  <strong>Drums</strong>
+                  <p>16-step pattern → Drum Rack<br><span class="note-map">Kick=C1 · Snare=D1 · CHH=F#1 · OHH=A#1 · Perc=D2</span></p>
+                </div>
+                <button class="btn-export-layer" id="export-drums-midi">⬇ .mid</button>
+              </div>
+
+              <div class="export-layer-card">
+                <div class="export-layer-icon" style="background:rgba(107,179,255,0.15)">🎸</div>
+                <div class="export-layer-info">
+                  <strong>Bass</strong>
+                  <p>Bassline in <span id="exp-key-bass">–</span> → any synth channel</p>
+                </div>
+                <button class="btn-export-layer" id="export-bass-midi">⬇ .mid</button>
+              </div>
+
+              <div class="export-layer-card">
+                <div class="export-layer-icon" style="background:rgba(201,168,76,0.15)">🎹</div>
+                <div class="export-layer-info">
+                  <strong>Melody</strong>
+                  <p>Lead/arp in <span id="exp-key-melody">–</span> → any synth channel</p>
+                </div>
+                <button class="btn-export-layer" id="export-melody-midi">⬇ .mid</button>
+              </div>
+
+              <div class="export-layer-card">
+                <div class="export-layer-icon" style="background:rgba(170,107,255,0.15)">🌊</div>
+                <div class="export-layer-info">
+                  <strong>Pads</strong>
+                  <p>Chords in <span id="exp-key-pads">–</span> → pad/atmosphere channel</p>
+                </div>
+                <button class="btn-export-layer" id="export-pads-midi">⬇ .mid</button>
+              </div>
+
             </div>
-            <div class="export-card">
-              <div class="export-icon">📋</div>
-              <h4>Export Arrangement</h4>
-              <p>Save the arrangement grid as a visual PDF reference.</p>
-              <button class="btn-gold" id="export-arr">Export Arrangement</button>
+          </div>
+
+          <div class="export-ableton-tip">
+            <span class="tip-icon">💡</span>
+            <div>
+              <strong>Ableton tip:</strong> Drop the drums .mid onto a MIDI track with a Drum Rack loaded.
+              Each row maps to a standard pad slot. Bass, melody and pads drop onto Instrument Rack channels — tune your synth to taste.
             </div>
           </div>
         </section>

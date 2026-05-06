@@ -310,6 +310,16 @@ function initPanelButtons() {
   document.getElementById('melody-generate')?.addEventListener('click', () => aiGenerateMelody());
   document.getElementById('pads-generate')?.addEventListener('click', () => aiGeneratePads());
 
+  // Export buttons
+  document.getElementById('export-midi')?.addEventListener('click', () => exportFullMidiPack());
+  document.getElementById('export-drums-midi')?.addEventListener('click', () => exportDrumMidi());
+  document.getElementById('export-bass-midi')?.addEventListener('click', () => exportBassMidi());
+  document.getElementById('export-melody-midi')?.addEventListener('click', () => exportMelodyMidi());
+  document.getElementById('export-drums-midi-quick')?.addEventListener('click', () => exportDrumMidi());
+  document.getElementById('export-pads-midi')?.addEventListener('click', () => exportPadsMidi());
+  document.getElementById('export-daw')?.addEventListener('click', () => exportDrumMidi());
+  document.getElementById('export-arr')?.addEventListener('click', () => exportFullMidiPack());
+
   // Preview buttons
   document.getElementById('drum-preview')?.addEventListener('click', () => previewDrums());
   document.getElementById('bass-preview')?.addEventListener('click', () => previewBass());
@@ -675,3 +685,262 @@ function previewDrums() {
 
 function previewBass() { previewDrums(); }
 function previewMelody() { previewDrums(); }
+
+// ═══════════════════════════════════════════════
+// MIDI EXPORT ENGINE
+// Pure JS — no dependencies. Builds a valid .mid file binary.
+// ═══════════════════════════════════════════════
+
+// Ableton Drum Rack MIDI note mapping (default Kit-Core 909)
+const DRUM_MIDI_NOTES = {
+  kick:  36,  // C1
+  snare: 38,  // D1
+  chh:   42,  // F#1 (closed hat)
+  ohh:   46,  // A#1 (open hat)
+  perc:  50,  // D2
+};
+
+function writeVarLen(value) {
+  // MIDI variable-length encoding
+  let bytes = [];
+  bytes.push(value & 0x7F);
+  value >>= 7;
+  while (value > 0) {
+    bytes.push((value & 0x7F) | 0x80);
+    value >>= 7;
+  }
+  return bytes.reverse();
+}
+
+function buildDrumMidi(pattern, bpm, bars = 2) {
+  const ticksPerBeat = 480;
+  const ticksPerStep = ticksPerBeat / 4; // 16th note = quarter note / 4
+  const totalSteps = 16 * bars;
+
+  // ── MIDI Header Chunk ──
+  const header = [
+    0x4D, 0x54, 0x68, 0x64, // "MThd"
+    0x00, 0x00, 0x00, 0x06, // chunk length = 6
+    0x00, 0x00,             // format 0 (single track)
+    0x00, 0x01,             // 1 track
+    (ticksPerBeat >> 8) & 0xFF, ticksPerBeat & 0xFF // ticks per quarter note
+  ];
+
+  // ── Build track events ──
+  let events = [];
+
+  // Tempo event (microseconds per beat)
+  const tempo = Math.round(60000000 / bpm);
+  events.push({
+    tick: 0,
+    data: [0xFF, 0x51, 0x03,
+      (tempo >> 16) & 0xFF,
+      (tempo >> 8) & 0xFF,
+      tempo & 0xFF
+    ]
+  });
+
+  // Track name
+  const trackName = 'BeatForge Drums';
+  const nameBytes = trackName.split('').map(c => c.charCodeAt(0));
+  events.push({
+    tick: 0,
+    data: [0xFF, 0x03, nameBytes.length, ...nameBytes]
+  });
+
+  // Note events — loop the pattern for `bars` bars
+  DRUM_ROWS.forEach(row => {
+    for (let bar = 0; bar < bars; bar++) {
+      for (let step = 0; step < 16; step++) {
+        const key = `${row.id}-${step}`;
+        if (pattern[key]) {
+          const note = DRUM_MIDI_NOTES[row.id] || 36;
+          const tick = (bar * 16 + step) * ticksPerStep;
+          const velocity = 100;
+          const duration = Math.round(ticksPerStep * 0.9); // slight gap between hits
+
+          // Note On
+          events.push({ tick, data: [0x99, note, velocity] }); // ch10 = drums
+          // Note Off
+          events.push({ tick: tick + duration, data: [0x89, note, 0] });
+        }
+      }
+    }
+  });
+
+  // End of track
+  const endTick = totalSteps * ticksPerStep;
+  events.push({ tick: endTick, data: [0xFF, 0x2F, 0x00] });
+
+  // Sort by tick
+  events.sort((a, b) => a.tick - b.tick);
+
+  // Convert to delta-time bytes
+  let trackBytes = [];
+  let prevTick = 0;
+  events.forEach(evt => {
+    const delta = evt.tick - prevTick;
+    prevTick = evt.tick;
+    trackBytes.push(...writeVarLen(delta));
+    trackBytes.push(...evt.data);
+  });
+
+  // ── MIDI Track Chunk ──
+  const trackLen = trackBytes.length;
+  const track = [
+    0x4D, 0x54, 0x72, 0x6B, // "MTrk"
+    (trackLen >> 24) & 0xFF,
+    (trackLen >> 16) & 0xFF,
+    (trackLen >> 8) & 0xFF,
+    trackLen & 0xFF,
+    ...trackBytes
+  ];
+
+  return new Uint8Array([...header, ...track]);
+}
+
+function buildNotesMidi(notes, channelNum, bpm, trackName = 'BeatForge') {
+  const ticksPerBeat = 480;
+  const ticksPerStep = ticksPerBeat / 4;
+
+  const header = [
+    0x4D, 0x54, 0x68, 0x64,
+    0x00, 0x00, 0x00, 0x06,
+    0x00, 0x00,
+    0x00, 0x01,
+    (ticksPerBeat >> 8) & 0xFF, ticksPerBeat & 0xFF
+  ];
+
+  let events = [];
+
+  const tempo = Math.round(60000000 / bpm);
+  events.push({
+    tick: 0,
+    data: [0xFF, 0x51, 0x03, (tempo >> 16) & 0xFF, (tempo >> 8) & 0xFF, tempo & 0xFF]
+  });
+
+  const nameBytes = trackName.split('').map(c => c.charCodeAt(0));
+  events.push({ tick: 0, data: [0xFF, 0x03, nameBytes.length, ...nameBytes] });
+
+  const ch = channelNum & 0x0F;
+  notes.forEach(n => {
+    const tick = Math.round(n.time * ticksPerStep);
+    const dur  = Math.round((n.duration || 1) * ticksPerStep * 0.9);
+    const vel  = Math.round(n.velocity || 90);
+    events.push({ tick,       data: [0x90 | ch, n.note & 0x7F, vel] });
+    events.push({ tick: tick + dur, data: [0x80 | ch, n.note & 0x7F, 0] });
+  });
+
+  const endTick = Math.max(...notes.map(n => Math.round((n.time + (n.duration||1)) * ticksPerStep))) + ticksPerStep;
+  events.push({ tick: endTick, data: [0xFF, 0x2F, 0x00] });
+
+  events.sort((a, b) => a.tick - b.tick);
+
+  let trackBytes = [];
+  let prevTick = 0;
+  events.forEach(evt => {
+    const delta = evt.tick - prevTick;
+    prevTick = evt.tick;
+    trackBytes.push(...writeVarLen(delta));
+    trackBytes.push(...evt.data);
+  });
+
+  const trackLen = trackBytes.length;
+  const track = [
+    0x4D, 0x54, 0x72, 0x6B,
+    (trackLen >> 24) & 0xFF, (trackLen >> 16) & 0xFF,
+    (trackLen >> 8) & 0xFF, trackLen & 0xFF,
+    ...trackBytes
+  ];
+
+  return new Uint8Array([...header, ...track]);
+}
+
+function downloadMidi(bytes, filename) {
+  const blob = new Blob([bytes], { type: 'audio/midi' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function exportDrumMidi() {
+  const hasNotes = Object.values(state.drums.pattern).some(v => v);
+  if (!hasNotes) {
+    addMessage('bot', "Your drum pattern is empty! Toggle some steps on the sequencer first. <em>Even I can't export silence.</em>");
+    return;
+  }
+  const bars = 2;
+  const midi = buildDrumMidi(state.drums.pattern, state.scene.bpm, bars);
+  const filename = `BeatForge_Drums_${state.scene.bpm}bpm_${bars}bars.mid`;
+  downloadMidi(midi, filename);
+  addMessage('bot', `Drums exported → <strong>${filename}</strong>. Drop it on a Drum Rack in Ableton. Notes are mapped to the default Kit-Core 909: Kick=C1, Snare=D1, CH=F#1, OH=A#1, Perc=D2. <em>You're welcome.</em>`);
+}
+
+function exportBassMidi() {
+  if (!state.bass.notes.length) {
+    addMessage('bot', "No bass notes yet — generate a bassline first! <em>Bass first, then glory.</em>");
+    return;
+  }
+  const midi = buildNotesMidi(state.bass.notes, 0, state.scene.bpm, 'BeatForge Bass');
+  downloadMidi(midi, `BeatForge_Bass_${state.scene.key}_${state.scene.bpm}bpm.mid`);
+  addMessage('bot', `Bass exported. Drop it on a synth channel in ${state.scene.key}. <em>That low end isn't going to produce itself.</em>`);
+}
+
+function exportMelodyMidi() {
+  if (!state.melody.notes.length) {
+    addMessage('bot', "No melody notes yet — generate a melody first! <em>Step 5, genius.</em>");
+    return;
+  }
+  const midi = buildNotesMidi(state.melody.notes, 1, state.scene.bpm, 'BeatForge Melody');
+  downloadMidi(midi, `BeatForge_Melody_${state.scene.key}_${state.scene.bpm}bpm.mid`);
+  addMessage('bot', `Melody exported in ${state.scene.key}. <em>Now THAT's a hook.</em>`);
+}
+
+function exportPadsMidi() {
+  if (!state.pads.notes.length) {
+    addMessage('bot', "No pad notes yet — generate pads first! <em>Atmosphere doesn't generate itself.</em>");
+    return;
+  }
+  const midi = buildNotesMidi(state.pads.notes, 2, state.scene.bpm, 'BeatForge Pads');
+  downloadMidi(midi, `BeatForge_Pads_${state.scene.key}_${state.scene.bpm}bpm.mid`);
+  addMessage('bot', `Pads exported. Long chords in ${state.scene.key}. <em>Beautiful.</em>`);
+}
+
+function exportFullMidiPack() {
+  const hasAnything = Object.values(state.drums.pattern).some(v => v) ||
+    state.bass.notes.length || state.melody.notes.length || state.pads.notes.length;
+  if (!hasAnything) {
+    addMessage('bot', "Nothing to export yet! Generate at least drums before hitting Export. <em>You need to actually make music first.</em>");
+    return;
+  }
+
+  let exported = [];
+  if (Object.values(state.drums.pattern).some(v => v)) {
+    downloadMidi(buildDrumMidi(state.drums.pattern, state.scene.bpm, 2),
+      `BeatForge_Drums_${state.scene.bpm}bpm.mid`);
+    exported.push('Drums');
+  }
+  if (state.bass.notes.length) {
+    downloadMidi(buildNotesMidi(state.bass.notes, 0, state.scene.bpm, 'BeatForge Bass'),
+      `BeatForge_Bass_${state.scene.key}.mid`);
+    exported.push('Bass');
+  }
+  if (state.melody.notes.length) {
+    downloadMidi(buildNotesMidi(state.melody.notes, 1, state.scene.bpm, 'BeatForge Melody'),
+      `BeatForge_Melody_${state.scene.key}.mid`);
+    exported.push('Melody');
+  }
+  if (state.pads.notes.length) {
+    downloadMidi(buildNotesMidi(state.pads.notes, 2, state.scene.bpm, 'BeatForge Pads'),
+      `BeatForge_Pads_${state.scene.key}.mid`);
+    exported.push('Pads');
+  }
+
+  addMessage('bot', `Exported ${exported.length} MIDI files: <strong>${exported.join(', ')}</strong>. Drop each one onto a separate channel in Ableton. Drums → Drum Rack. Everything else → your synth of choice. <em>Now go make something ridiculous.</em>`);
+}
+
