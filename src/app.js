@@ -13,6 +13,7 @@ const state = {
     reference: null
   },
   arrangement: {},
+  progression: {},    // per-section evolution: { 'si': { melody:{}, bass:{}, drums:{} } }
   drums: { style:'rolling', swing:15, density:5, humanise:30, pattern:{} },
   bass: { style:'rolling-sub', complexity:4, octave:1, notes:[] },
   melody: { style:'arp', complexity:5, density:5, notes:[] },
@@ -54,6 +55,173 @@ function getBarsPerSection(bpm, totalMins, numSections) {
   const totalBars = Math.round((totalMins * bpm) / 4);
   return Math.max(4, Math.round(totalBars / numSections));
 }
+
+// ─── PROGRESSION BLUEPRINT ENGINE ───────────────────────────
+// Classify a section name into a role type
+function classifySection(name) {
+  const n = name.toLowerCase();
+  if (n.includes('intro'))     return 'intro';
+  if (n.includes('outro'))     return 'outro';
+  if (n.includes('breakdown')) return 'breakdown';
+  if (n.includes('build'))     return 'build';
+  if (n.includes('drop'))      return 'drop';
+  return 'drop';
+}
+
+// How many unique drops have appeared so far (1st drop = 1, 2nd = 2, etc.)
+function getDropIndex(sections, currentIdx) {
+  let count = 0;
+  for (let i = 0; i <= currentIdx; i++) {
+    if (classifySection(sections[i]) === 'drop') count++;
+  }
+  return count;
+}
+
+// Generate the evolution blueprint for every section
+function buildProgressionBlueprint(sections) {
+  const blueprint = {};
+  sections.forEach((name, si) => {
+    const role = classifySection(name);
+    const dropIdx = role === 'drop' ? getDropIndex(sections, si) : 0;
+    blueprint[si] = buildSectionEvolution(role, dropIdx, si, sections.length);
+  });
+  return blueprint;
+}
+
+// Per-section evolution state
+function buildSectionEvolution(role, dropIdx, si, totalSections) {
+  // Melody phrase lengths: 2 bars intro motif → 4 bars first drop → 8 bars evolved drops
+  // Bass: root only intro → walking first drop → full progression later
+  // Drums: stripped intro/breakdown → full drop → perc layers added in later drops
+
+  const evo = {
+    melody: {
+      phraseLen:   2,    // bars the melody phrase spans before looping
+      noteDensity: 2,    // how many scale degrees are active (1-7)
+      octaveSpread:0,    // 0 = root octave only, 1 = +1 octave added
+      intensity:   40,   // velocity base (0-127)
+      motifNotes:  null, // generated later from base melody
+      label:       '',
+    },
+    bass: {
+      phraseLen:   2,
+      style:       'root',  // root | walk | progression
+      octaveDepth: 0,        // 0 = normal, 1 = sub octave added
+      intensity:   80,
+      label:       '',
+    },
+    drums: {
+      elements: ['kick'],   // which drum elements are active
+      density:  3,          // perc/hat density multiplier 1-10
+      swing:    0,          // extra swing % for this section
+      label:    '',
+    }
+  };
+
+  if (role === 'intro') {
+    evo.melody.phraseLen    = 2;
+    evo.melody.noteDensity  = 2;
+    evo.melody.octaveSpread = 0;
+    evo.melody.intensity    = 45;
+    evo.melody.label        = '2-bar motif seed';
+    evo.bass.phraseLen      = 2;
+    evo.bass.style          = 'root';
+    evo.bass.intensity      = 70;
+    evo.bass.label          = 'Root note only';
+    evo.drums.elements      = ['kick'];
+    evo.drums.density       = 2;
+    evo.drums.label         = 'Kick only';
+  } else if (role === 'build') {
+    evo.melody.phraseLen    = 4;
+    evo.melody.noteDensity  = 3;
+    evo.melody.octaveSpread = 0;
+    evo.melody.intensity    = 60;
+    evo.melody.label        = '4-bar motif rising';
+    evo.bass.phraseLen      = 4;
+    evo.bass.style          = 'walk';
+    evo.bass.intensity      = 85;
+    evo.bass.label          = 'Walking root-fifth';
+    evo.drums.elements      = ['kick','hats','perc'];
+    evo.drums.density       = 6;
+    evo.drums.swing         = 5;
+    evo.drums.label         = 'Full kit building';
+  } else if (role === 'drop') {
+    if (dropIdx === 1) {
+      evo.melody.phraseLen    = 4;
+      evo.melody.noteDensity  = 4;
+      evo.melody.octaveSpread = 0;
+      evo.melody.intensity    = 90;
+      evo.melody.label        = '4-bar phrase — melody introduced';
+      evo.bass.phraseLen      = 4;
+      evo.bass.style          = 'walk';
+      evo.bass.octaveDepth    = 1;
+      evo.bass.intensity      = 100;
+      evo.bass.label          = 'Root + fifth, sub octave';
+      evo.drums.elements      = ['kick','snare','hats','perc'];
+      evo.drums.density       = 7;
+      evo.drums.label         = 'Full groove';
+    } else if (dropIdx === 2) {
+      evo.melody.phraseLen    = 8;
+      evo.melody.noteDensity  = 6;
+      evo.melody.octaveSpread = 1;
+      evo.melody.intensity    = 100;
+      evo.melody.label        = '8-bar — evolved full melody';
+      evo.bass.phraseLen      = 8;
+      evo.bass.style          = 'progression';
+      evo.bass.octaveDepth    = 1;
+      evo.bass.intensity      = 110;
+      evo.bass.label          = 'Full chord progression';
+      evo.drums.elements      = ['kick','snare','hats','ohh','perc'];
+      evo.drums.density       = 9;
+      evo.drums.label         = 'Full kit + open hats';
+    } else {
+      // 3rd drop+ — maximum evolution
+      evo.melody.phraseLen    = 16;
+      evo.melody.noteDensity  = 7;
+      evo.melody.octaveSpread = 1;
+      evo.melody.intensity    = 110;
+      evo.melody.label        = '16-bar — peak evolution';
+      evo.bass.phraseLen      = 16;
+      evo.bass.style          = 'progression';
+      evo.bass.octaveDepth    = 1;
+      evo.bass.intensity      = 115;
+      evo.bass.label          = 'Driving chord progression';
+      evo.drums.elements      = ['kick','snare','hats','ohh','perc'];
+      evo.drums.density       = 10;
+      evo.drums.label         = 'Peak energy — full layers';
+    }
+  } else if (role === 'breakdown') {
+    evo.melody.phraseLen    = 8;
+    evo.melody.noteDensity  = 3;
+    evo.melody.octaveSpread = 0;
+    evo.melody.intensity    = 55;
+    evo.melody.label        = '8-bar stripped — pads carry it';
+    evo.bass.phraseLen      = 8;
+    evo.bass.style          = 'root';
+    evo.bass.octaveDepth    = 0;
+    evo.bass.intensity      = 65;
+    evo.bass.label          = 'Root sub only';
+    evo.drums.elements      = ['kick'];
+    evo.drums.density       = 2;
+    evo.drums.label         = 'Minimal — kick only';
+  } else if (role === 'outro') {
+    evo.melody.phraseLen    = 4;
+    evo.melody.noteDensity  = 2;
+    evo.melody.octaveSpread = 0;
+    evo.melody.intensity    = 35;
+    evo.melody.label        = '4-bar fading out';
+    evo.bass.phraseLen      = 4;
+    evo.bass.style          = 'root';
+    evo.bass.intensity      = 60;
+    evo.bass.label          = 'Root only, fading';
+    evo.drums.elements      = ['kick','hats'];
+    evo.drums.density       = 3;
+    evo.drums.label         = 'Sparse — kick + hats';
+  }
+
+  return evo;
+}
+
 
 // Drum rows
 const DRUM_ROWS = [
@@ -222,41 +390,107 @@ function initArrangement() {
 
 function buildArrangementGrid() {
   const sections = getSections(state.scene.length);
-  const sectionLabels = document.getElementById('section-labels');
-  const layerLabels = document.getElementById('layer-labels');
-  const grid = document.getElementById('arr-grid');
+  const bpm = state.scene.bpm;
+  const totalMins = parseFloat(state.scene.length) || 6;
+  const bars = getBarsPerSection(bpm, totalMins, sections.length);
 
-  // Section headers
-  sectionLabels.innerHTML = sections.map(s =>
-    `<div class="arr-sec-label">${s}</div>`
-  ).join('');
+  // Build blueprint if not already done
+  if (!state.progression || Object.keys(state.progression).length === 0) {
+    state.progression = buildProgressionBlueprint(sections);
+  }
 
-  // Layer labels
-  layerLabels.innerHTML = LAYERS.map(l =>
-    `<div class="arr-layer-lbl"><span class="arr-layer-dot" style="background:${l.color}"></span>${l.name}</div>`
-  ).join('');
-
-  // Grid cells
-  grid.innerHTML = LAYERS.map(layer =>
-    `<div class="arr-row">${sections.map((sec, si) => {
+  // Build old-style arrangement defaults too (for MIDI export compatibility)
+  LAYERS.forEach(layer => {
+    sections.forEach((sec, si) => {
       const key = `${layer.id}-${si}`;
-      const isActive = state.arrangement[key] !== false;
-      // Default: sensible arrangement
       if (!(key in state.arrangement)) {
         state.arrangement[key] = getDefaultArrangement(layer.id, si, sections.length);
       }
-      return `<div class="arr-cell ${state.arrangement[key] ? 'active' : ''}" 
-                   data-layer="${layer.id}" data-section="${si}" 
-                   data-key="${key}"></div>`;
-    }).join('')}</div>`
-  ).join('');
+    });
+  });
 
-  // Click handlers
-  grid.querySelectorAll('.arr-cell').forEach(cell => {
-    cell.addEventListener('click', () => {
-      const key = cell.dataset.key;
-      state.arrangement[key] = !state.arrangement[key];
-      cell.classList.toggle('active');
+  const grid = document.getElementById('arr-grid');
+  const sectionLabels = document.getElementById('section-labels');
+  const layerLabels = document.getElementById('layer-labels');
+
+  // Hide old label containers if they exist — we're taking over
+  if (sectionLabels) sectionLabels.style.display = 'none';
+  if (layerLabels) layerLabels.style.display = 'none';
+
+  // Render progression timeline cards
+  grid.innerHTML = `
+    <div class="prog-timeline">
+      ${sections.map((name, si) => {
+        const evo = state.progression[si];
+        const role = classifySection(name);
+        const roleColor = {
+          intro:'#6b6bff', build:'#ffaa33', drop:'#c9a84c',
+          breakdown:'#9b59b6', outro:'#555'
+        }[role] || '#c9a84c';
+
+        const drumElements = evo.drums.elements.join(' · ');
+
+        return `<div class="prog-card" data-si="${si}" style="border-top:3px solid ${roleColor}">
+          <div class="prog-card-header">
+            <span class="prog-section-name">${name}</span>
+            <span class="prog-role-badge" style="background:${roleColor}22;color:${roleColor}">${role.toUpperCase()}</span>
+          </div>
+          <div class="prog-layers">
+            <div class="prog-layer-row" data-layer="melody" data-si="${si}">
+              <span class="prog-layer-icon">♪</span>
+              <div class="prog-layer-info">
+                <span class="prog-layer-title">Melody</span>
+                <span class="prog-layer-detail" id="mel-label-${si}">${evo.melody.label}</span>
+              </div>
+              <div class="prog-controls">
+                <button class="prog-btn prog-phrase-down" data-layer="melody" data-si="${si}" title="Shorter phrase">−</button>
+                <span class="prog-phrase-val" id="mel-phrase-${si}">${evo.melody.phraseLen}bar</span>
+                <button class="prog-btn prog-phrase-up" data-layer="melody" data-si="${si}" title="Longer phrase">+</button>
+                <span class="prog-density-val" id="mel-density-${si}" title="Note density">${evo.melody.noteDensity}/${7} notes</span>
+              </div>
+            </div>
+            <div class="prog-layer-row" data-layer="bass" data-si="${si}">
+              <span class="prog-layer-icon">◉</span>
+              <div class="prog-layer-info">
+                <span class="prog-layer-title">Bass</span>
+                <span class="prog-layer-detail" id="bass-label-${si}">${evo.bass.label}</span>
+              </div>
+              <div class="prog-controls">
+                <button class="prog-btn prog-phrase-down" data-layer="bass" data-si="${si}" title="Shorter phrase">−</button>
+                <span class="prog-phrase-val" id="bass-phrase-${si}">${evo.bass.phraseLen}bar</span>
+                <button class="prog-btn prog-phrase-up" data-layer="bass" data-si="${si}" title="Longer phrase">+</button>
+                <span class="prog-style-val" id="bass-style-${si}" title="Bass style">${evo.bass.style}</span>
+              </div>
+            </div>
+            <div class="prog-layer-row" data-layer="drums" data-si="${si}">
+              <span class="prog-layer-icon">◈</span>
+              <div class="prog-layer-info">
+                <span class="prog-layer-title">Drums</span>
+                <span class="prog-layer-detail" id="drum-label-${si}">${evo.drums.label}</span>
+              </div>
+              <div class="prog-controls">
+                <span class="prog-drum-elements" id="drum-els-${si}">${drumElements}</span>
+              </div>
+            </div>
+          </div>
+          <div class="prog-section-bars">~${bars} bars</div>
+        </div>`;
+      }).join('')}
+    </div>`;
+
+  // Phrase length +/- controls
+  grid.querySelectorAll('.prog-phrase-up, .prog-phrase-down').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const si = parseInt(btn.dataset.si);
+      const layer = btn.dataset.layer;
+      const evo = state.progression[si][layer];
+      const isUp = btn.classList.contains('prog-phrase-up');
+      const options = [1,2,4,8,16,32];
+      const cur = options.indexOf(evo.phraseLen);
+      const next = isUp ? Math.min(options.length-1, cur+1) : Math.max(0, cur-1);
+      evo.phraseLen = options[next];
+      const el = document.getElementById(`${layer === 'melody' ? 'mel' : 'bass'}-phrase-${si}`);
+      if (el) el.textContent = evo.phraseLen + 'bar';
     });
   });
 }
@@ -475,10 +709,13 @@ async function aiSuggestArrangement() {
     });
   });
   
+  // Rebuild progression blueprint fresh
+  state.progression = buildProgressionBlueprint(sections);
   buildArrangementGrid();
   
   setTimeout(() => {
-    addMessage('bot', `Done. I've laid out a ${genre.replace(/-/g,' ')} arrangement — kick drops out in breakdowns, pads fill the atmosphere, lead only hits in the drops. Adjust anything you want. <em>That's how a ${state.scene.reference || 'proper'} track breathes.</em>`);
+    const dropCount = sections.filter(s => classifySection(s) === 'drop').length;
+    addMessage('bot', `Done. <strong>${sections.length} sections mapped</strong> — full progression blueprint generated. Your melody starts as a 2-bar seed and evolves through ${dropCount} drops into a complete phrase. Bass walks the chord, drums build in layers. Every section already knows what it's playing and how long. <em>Drop in your instruments. You're welcome.</em>`);
   }, 800);
 }
 
@@ -1526,34 +1763,103 @@ function buildArrangementClip(noteEvents, ccCurves, channel, bpm, bars, trackNam
 }
 
 // ── Build note events for a layer (reuses existing pattern/notes) ──
-function buildLayerNoteEvents(layer, bars, channel) {
+function buildLayerNoteEvents(layer, bars, channel, evo) {
+  // evo = progression blueprint for this section (optional)
   const ch = channel & 0x0F;
   const ticksPerBeat = 480;
   const ticksPerStep = ticksPerBeat / 4;
   const events = [];
 
   if (layer === 'drums') {
+    // Use drum elements from blueprint to filter which rows play
+    const activeElements = evo && evo.drums ? evo.drums.elements : null;
     DRUM_ROWS.forEach(row => {
+      if (activeElements && !activeElements.includes(row.id)) return;
       const note = DRUM_MIDI_NOTES[row.id] || 36;
+      const density = evo && evo.drums ? evo.drums.density : 5;
       for (let bar = 0; bar < bars; bar++) {
         for (let step = 0; step < 16; step++) {
           if (state.drums.pattern[`${row.id}-${step}`]) {
             const tick = (bar * 16 + step) * ticksPerStep;
             const dur  = Math.round(ticksPerStep * 0.9);
-            events.push({ tick,       data:[0x99, note, 100] });
+            const vel  = Math.min(127, Math.round(70 + density * 5));
+            events.push({ tick,        data:[0x99, note, vel] });
             events.push({ tick:tick+dur, data:[0x89, note, 0] });
           }
         }
       }
     });
   } else {
-    const notes = layer === 'bass' ? state.bass.notes
-                : layer === 'melody' ? state.melody.notes
-                : state.pads.notes;
-    notes.forEach(n => {
-      events.push({ tick: n.tick,          data:[0x90|ch, n.note, n.velocity||100] });
-      events.push({ tick: n.tick+n.duration, data:[0x80|ch, n.note, 0] });
-    });
+    const baseNotes = layer === 'bass' ? state.bass.notes
+                    : layer === 'melody' ? state.melody.notes
+                    : state.pads.notes;
+
+    if (!baseNotes || !baseNotes.length) return events;
+
+    // Phrase length from blueprint
+    const phraseLen = evo && evo[layer] ? evo[layer].phraseLen : null;
+    const intensity = evo && evo[layer] ? evo[layer].intensity : 100;
+    const noteDensity = evo && evo.melody && layer === 'melody' ? evo.melody.noteDensity : 7;
+
+    // Steps in one phrase (each step = 16th note)
+    const phraseSteps = phraseLen ? phraseLen * 16 : null;
+    const ticksPerBar = ticksPerBeat * 4;
+    const totalTicks = bars * ticksPerBar;
+
+    // For melody: filter notes by density (take first N unique pitches)
+    let filteredNotes = baseNotes;
+    if (layer === 'melody' && noteDensity < 7) {
+      // Get unique pitches, keep only noteDensity of them
+      const pitches = [...new Set(baseNotes.map(n => n.note))].slice(0, noteDensity);
+      filteredNotes = baseNotes.filter(n => pitches.includes(n.note));
+    }
+
+    // For bass: apply style variation
+    if (layer === 'bass' && evo && evo.bass) {
+      const bStyle = evo.bass.style;
+      const scale = getScale(state.scene.key);
+      if (bStyle === 'root') {
+        // Only root note
+        filteredNotes = baseNotes.filter(n => n.note % 12 === scale[0] % 12);
+        if (!filteredNotes.length) filteredNotes = baseNotes.slice(0,1);
+      } else if (bStyle === 'walk') {
+        // Root + fifth allowed
+        filteredNotes = baseNotes.filter(n => {
+          const pc = n.note % 12;
+          return pc === scale[0] % 12 || pc === scale[4] % 12;
+        });
+        if (!filteredNotes.length) filteredNotes = baseNotes;
+      }
+      // 'progression' = all notes, no filter
+    }
+
+    // Tile the phrase across total bars
+    if (phraseSteps && phraseSteps > 0) {
+      const phraseTicks = phraseSteps * ticksPerStep;
+      let offset = 0;
+      while (offset < totalTicks) {
+        filteredNotes.forEach(n => {
+          const noteTick = n.time !== undefined ? n.time * ticksPerStep : (n.tick || 0);
+          const noteDur  = n.duration !== undefined ? n.duration * ticksPerStep : (n.dur || ticksPerStep);
+          const t = offset + noteTick;
+          if (t < totalTicks) {
+            const vel = Math.min(127, Math.round((n.velocity || 100) * (intensity / 100)));
+            events.push({ tick: t,            data:[0x90|ch, n.note, vel] });
+            events.push({ tick: t + noteDur,  data:[0x80|ch, n.note, 0] });
+          }
+        });
+        offset += phraseTicks;
+      }
+    } else {
+      // No blueprint — just tile based on note timings
+      filteredNotes.forEach(n => {
+        const noteTick = n.time !== undefined ? n.time * ticksPerStep : (n.tick || 0);
+        const noteDur  = n.duration !== undefined ? n.duration * ticksPerStep : (n.dur || ticksPerStep);
+        const vel = Math.min(127, Math.round((n.velocity || 100) * ((intensity||100) / 100)));
+        events.push({ tick: noteTick,          data:[0x90|ch, n.note, vel] });
+        events.push({ tick: noteTick+noteDur,  data:[0x80|ch, n.note, 0] });
+      });
+    }
   }
 
   return events;
@@ -1588,6 +1894,8 @@ async function exportArrangement() {
     const padNum = String(si+1).padStart(2,'0');
     const safeName = sectionName.replace(/\s+/g,'_');
 
+    const sectionEvo = state.progression && state.progression[si] ? state.progression[si] : null;
+
     layers.forEach(layer => {
       // Check if this layer is active in this section
       const arrKey = `${layer === 'drums' ? 'kick' : layer}-${si}`;
@@ -1595,14 +1903,17 @@ async function exportArrangement() {
       if (!isActive) return;
 
       const meta   = LAYER_META[layer];
+      const evo    = sectionEvo;
+      // Use progression phrase length to determine clip bar count
+      const clipBars = evo && evo[layer] ? evo[layer].phraseLen : bars;
       const ccCurves = getCCAutomation(role, layer);
-      const noteEvents = buildLayerNoteEvents(layer, bars, meta.channel);
+      const noteEvents = buildLayerNoteEvents(layer, clipBars, meta.channel, evo);
 
       const filename = `${padNum}_${safeName}__${meta.short}.mid`;
       const trackName = `${sectionName} ${meta.label}`;
-      const bytes = buildArrangementClip(noteEvents, ccCurves, meta.channel, bpm, bars, trackName);
+      const bytes = buildArrangementClip(noteEvents, ccCurves, meta.channel, bpm, clipBars, trackName);
 
-      files.push({ filename, bytes, section: sectionName, layer, role });
+      files.push({ filename, bytes, section: sectionName, layer, role, clipBars });
     });
   });
 
