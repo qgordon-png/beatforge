@@ -9,7 +9,7 @@ const state = {
     key: 'Am',
     bpm: 128,
     mood: 'driving',
-    length: '6min',
+    length: '6',
     reference: null
   },
   arrangement: {},
@@ -33,13 +33,26 @@ const LAYERS = [
 
 // Section definitions based on track length
 function getSections(length) {
-  const map = {
-    '4min': ['Intro','Build','Drop','Breakdown','Drop 2','Outro'],
-    '6min': ['Intro','Build A','Drop A','Breakdown','Build B','Drop B','Outro'],
-    '8min': ['Intro','Build A','Drop A','Breakdown 1','Build B','Drop B','Breakdown 2','Drop C','Outro'],
-    '10min': ['Intro','Build A','Drop A','Breakdown 1','Build B','Drop B','Breakdown 2','Build C','Drop C','Outro'],
-  };
-  return map[length] || map['6min'];
+  // Accept '6', '6min', or numeric
+  const mins = parseFloat(String(length).replace('min','')) || 6;
+  if (mins <= 4)  return ['Intro','Build','Drop','Breakdown','Drop 2','Outro'];
+  if (mins <= 6)  return ['Intro','Build A','Drop A','Breakdown','Build B','Drop B','Outro'];
+  if (mins <= 8)  return ['Intro','Build A','Drop A','Breakdown 1','Build B','Drop B','Breakdown 2','Drop C','Outro'];
+  if (mins <= 10) return ['Intro','Build A','Drop A','Breakdown 1','Build B','Drop B','Breakdown 2','Build C','Drop C','Outro'];
+  const base = ['Intro','Build A','Drop A','Breakdown 1','Build B','Drop B','Breakdown 2','Build C','Drop C'];
+  const extra = Math.floor((mins - 10) / 2);
+  for (let i = 0; i < extra; i++) {
+    const letter = String.fromCharCode(68 + i);
+    base.push(`Breakdown ${3+i}`, `Drop ${letter}`);
+  }
+  base.push('Outro');
+  return base;
+}
+
+function getBarsPerSection(bpm, totalMins, numSections) {
+  totalMins = parseFloat(String(totalMins).replace('min','')) || 6;
+  const totalBars = Math.round((totalMins * bpm) / 4);
+  return Math.max(4, Math.round(totalBars / numSections));
 }
 
 // Drum rows
@@ -86,9 +99,7 @@ function initTrackLengthInput() {
     const v = Math.max(1, Math.min(60, parseFloat(input.value) || 6));
     state.scene.length = String(v);
     updateHint(v);
-    // Update toolbar if visible
-    const tb = document.getElementById('tb-bpm');
-    if (tb) updateToolbar();
+    updateTransportBar();
   });
 }
 
