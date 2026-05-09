@@ -4,6 +4,11 @@
 
 // ─── STATE ───
 const state = {
+  idea: {
+    role: 'melody',
+    notes: [],
+    text: '',
+  },
   scene: {
     genre: 'melodic-techno',
     key: 'Am',
@@ -363,9 +368,500 @@ const DRUM_ROWS = [
 ];
 
 // ─── INIT ───
+
+// ════════════════════════════════════════════════════════════
+// IDEA SCREEN ENGINE
+// The whole track starts here. One idea → everything else.
+// ════════════════════════════════════════════════════════════
+
+// Piano roll state
+const ideaRoll = {
+  notes: [],          // [{row, step, len, vel}]
+  rows: 24,           // visible pitch rows
+  bars: 2,
+  snap: 1,            // steps (1=16th, 2=8th, 4=quarter)
+  rootMidi: 69,       // A4 default
+  scaleDegrees: [],   // MIDI notes that are in scale
+  drawing: false,
+  resizing: null,
+  startStep: null,
+  startRow: null,
+  activeNote: null,
+};
+
+const SCALES = {
+  'Am':  [0,2,3,5,7,8,10],
+  'Cm':  [0,2,3,5,7,8,10],
+  'Dm':  [0,2,3,5,7,8,10],
+  'Em':  [0,2,3,5,7,8,10],
+  'Fm':  [0,2,3,5,7,8,10],
+  'Gm':  [0,2,3,5,7,8,10],
+  'Bm':  [0,2,3,5,7,8,10],
+  'Bbm': [0,2,3,5,7,8,10],
+};
+
+const KEY_ROOTS = {
+  'Am':69,'Cm':60,'Dm':62,'Em':64,'Fm':65,'Gm':67,'Bm':71,'Bbm':70
+};
+
+const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+
+function ideaMidiToName(midi) {
+  return NOTE_NAMES[midi % 12] + Math.floor(midi/12 - 1);
+}
+
+function initIdeaScreen() {
+  // Mode toggle
+  document.querySelectorAll('.idea-mode-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.idea-mode-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const mode = btn.dataset.mode;
+      document.getElementById('idea-pane-describe').classList.toggle('hidden', mode === 'draw');
+      document.getElementById('idea-pane-draw').classList.toggle('hidden', mode === 'describe');
+      if (mode === 'both') {
+        document.getElementById('idea-pane-describe').classList.remove('hidden');
+        document.getElementById('idea-pane-draw').classList.remove('hidden');
+      }
+      if (mode !== 'describe') initIdeaRoll();
+    });
+  });
+
+  // Role buttons
+  document.querySelectorAll('.idea-role-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.idea-role-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.idea.role = btn.dataset.role;
+    });
+  });
+
+  // Parse idea button
+  document.getElementById('idea-parse-btn')?.addEventListener('click', parseIdeaText);
+
+  // Roll toolbar
+  document.getElementById('idea-roll-key')?.addEventListener('change', e => {
+    state.scene.key = e.target.value;
+    document.getElementById('tb-key').textContent = e.target.value;
+    ideaRoll.rootMidi = KEY_ROOTS[e.target.value] || 69;
+    initIdeaRoll();
+  });
+  document.getElementById('idea-roll-bars')?.addEventListener('change', e => {
+    ideaRoll.bars = parseInt(e.target.value);
+    initIdeaRoll();
+  });
+  document.getElementById('idea-roll-snap')?.addEventListener('change', e => {
+    ideaRoll.snap = parseInt(e.target.value);
+  });
+  document.getElementById('idea-roll-clear')?.addEventListener('click', () => {
+    ideaRoll.notes = [];
+    drawIdeaRoll();
+  });
+  document.getElementById('idea-roll-suggest')?.addEventListener('click', suggestIdeaPhrase);
+  document.getElementById('idea-roll-quant')?.addEventListener('click', quantiseIdeaRoll);
+
+  // Build button
+  document.getElementById('idea-build-btn')?.addEventListener('click', buildTrackFromIdea);
+
+  // Blueprint strip live update
+  updateIdeaBlueprintStrip();
+  initIdeaRoll();
+}
+
+// ── Piano Roll Renderer ──
+function initIdeaRoll() {
+  const key      = document.getElementById('idea-roll-key')?.value || 'Am';
+  const root     = KEY_ROOTS[key] || 69;
+  const scale    = SCALES[key]    || [0,2,3,5,7,8,10];
+  ideaRoll.rootMidi    = root;
+  ideaRoll.scaleDegrees = [];
+
+  // Build key labels
+  const keyEl = document.getElementById('idea-roll-keys');
+  if (!keyEl) return;
+  keyEl.innerHTML = '';
+
+  // 24 rows from root+12 down to root-12
+  for (let i = 0; i < ideaRoll.rows; i++) {
+    const midi    = root + 12 - i;
+    const pc      = ((midi % 12) + 12) % 12;
+    const isScale = scale.includes(pc);
+    const isRoot  = pc === (root % 12);
+    if (isScale) ideaRoll.scaleDegrees.push(midi);
+    const d = document.createElement('div');
+    d.className = 'irk-key ' + (isRoot ? 'root-deg' : isScale ? 'scale-deg' : ([1,3,6,8,10].includes(pc) ? 'black' : 'white'));
+    d.textContent = isRoot || isScale ? NOTE_NAMES[pc] : '';
+    keyEl.appendChild(d);
+  }
+
+  drawIdeaRoll();
+  attachIdeaRollEvents();
+}
+
+function drawIdeaRoll() {
+  const canvas = document.getElementById('idea-roll-canvas');
+  if (!canvas) return;
+  const totalSteps = ideaRoll.bars * 16;
+  const stepW = 28;
+  const rowH  = Math.floor(220 / ideaRoll.rows);
+  canvas.width  = totalSteps * stepW;
+  canvas.height = ideaRoll.rows * rowH;
+  const ctx = canvas.getContext('2d');
+
+  const key   = document.getElementById('idea-roll-key')?.value || 'Am';
+  const root  = KEY_ROOTS[key] || 69;
+  const scale = SCALES[key]    || [0,2,3,5,7,8,10];
+
+  // Background rows
+  for (let r = 0; r < ideaRoll.rows; r++) {
+    const midi = root + 12 - r;
+    const pc   = ((midi%12)+12)%12;
+    const isScale = scale.includes(pc);
+    const isRoot  = pc === (root%12);
+    ctx.fillStyle = isRoot ? '#1a1500' : isScale ? '#111108' : ([1,3,6,8,10].includes(pc) ? '#0a0a0a' : '#0e0e0e');
+    ctx.fillRect(0, r*rowH, canvas.width, rowH);
+
+    // Row line
+    ctx.strokeStyle = isRoot ? '#c9a84c33' : '#1a1a1a';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0,r*rowH); ctx.lineTo(canvas.width,r*rowH); ctx.stroke();
+  }
+
+  // Beat/bar lines
+  for (let s = 0; s < totalSteps; s++) {
+    const x = s * stepW;
+    ctx.strokeStyle = s % 16 === 0 ? '#c9a84c55' : s % 4 === 0 ? '#2a2a2a' : '#1a1a1a';
+    ctx.lineWidth = s % 16 === 0 ? 2 : 1;
+    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,canvas.height); ctx.stroke();
+  }
+
+  // Notes
+  ideaRoll.notes.forEach(n => {
+    const x   = n.step * stepW;
+    const y   = n.row  * rowH + 1;
+    const w   = Math.max(stepW*0.6, n.len * stepW - 2);
+    const h   = rowH - 2;
+    ctx.fillStyle   = '#c9a84c';
+    ctx.strokeStyle = '#e6c86a';
+    ctx.lineWidth   = 1;
+    ctx.beginPath();
+    ctx.roundRect ? ctx.roundRect(x+1,y,w,h,3) : ctx.rect(x+1,y,w,h);
+    ctx.fill(); ctx.stroke();
+
+    // Velocity bar
+    ctx.fillStyle = '#00000066';
+    ctx.fillRect(x+1, y+h-3, w, 3);
+    ctx.fillStyle = '#e6c86a';
+    ctx.fillRect(x+1, y+h-3, w*(n.vel/127), 3);
+  });
+}
+
+function attachIdeaRollEvents() {
+  const canvas = document.getElementById('idea-roll-canvas');
+  if (!canvas || canvas._eventsAttached) return;
+  canvas._eventsAttached = true;
+
+  const getPos = (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const totalSteps = ideaRoll.bars * 16;
+    const stepW = canvas.width / totalSteps;
+    const rowH  = canvas.height / ideaRoll.rows;
+    const x     = (e.clientX - rect.left) * (canvas.width / rect.width);
+    const y     = (e.clientY - rect.top)  * (canvas.height / rect.height);
+    return {
+      step: Math.floor(x / stepW),
+      row:  Math.floor(y / rowH),
+      stepW, rowH
+    };
+  };
+
+  canvas.addEventListener('mousedown', e => {
+    e.preventDefault();
+    const {step, row} = getPos(e);
+    if (e.button === 2) {
+      // Right click = delete
+      ideaRoll.notes = ideaRoll.notes.filter(n => !(n.row===row && step>=n.step && step<n.step+n.len));
+      drawIdeaRoll(); return;
+    }
+    // Check if clicking existing note right edge (resize)
+    const snap = ideaRoll.snap;
+    const snapped = Math.round(step/snap)*snap;
+    const existing = ideaRoll.notes.find(n => n.row===row && snapped>=n.step && snapped<n.step+n.len);
+    if (existing) {
+      ideaRoll.resizing = existing;
+      ideaRoll.startStep = snapped;
+    } else {
+      const newNote = { row, step: snapped, len: snap, vel: 100 };
+      ideaRoll.notes.push(newNote);
+      ideaRoll.activeNote = newNote;
+      ideaRoll.drawing = true;
+      ideaRoll.startStep = snapped;
+    }
+    drawIdeaRoll();
+  });
+
+  canvas.addEventListener('mousemove', e => {
+    if (!ideaRoll.drawing && !ideaRoll.resizing) return;
+    const {step} = getPos(e);
+    const snap = ideaRoll.snap;
+    const snapped = Math.max(snap, Math.round(step/snap)*snap);
+    if (ideaRoll.drawing && ideaRoll.activeNote) {
+      ideaRoll.activeNote.len = Math.max(snap, snapped - ideaRoll.activeNote.step);
+      drawIdeaRoll();
+    }
+    if (ideaRoll.resizing) {
+      ideaRoll.resizing.len = Math.max(snap, snapped - ideaRoll.resizing.step);
+      drawIdeaRoll();
+    }
+  });
+
+  canvas.addEventListener('mouseup', () => {
+    ideaRoll.drawing  = false;
+    ideaRoll.resizing = null;
+    ideaRoll.activeNote = null;
+    // Push notes into state
+    commitIdeaRollToState();
+  });
+
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
+}
+
+function commitIdeaRollToState() {
+  const key   = document.getElementById('idea-roll-key')?.value || 'Am';
+  const root  = KEY_ROOTS[key] || 69;
+  // Convert roll notes → MIDI note objects
+  state.idea.notes = ideaRoll.notes.map(n => ({
+    note:     root + 12 - n.row,
+    time:     n.step,
+    duration: n.len,
+    velocity: n.vel,
+  }));
+}
+
+// ── Suggest a phrase based on intent ──
+function suggestIdeaPhrase() {
+  const bp   = computeIntentBlueprint();
+  const key  = document.getElementById('idea-roll-key')?.value || 'Am';
+  const root = KEY_ROOTS[key] || 69;
+  const scale = SCALES[key] || [0,2,3,5,7,8,10];
+  const arc  = state.scene.energyArc || 'club-banger';
+  const atmo = state.scene.atmosphere || 'euphoric';
+  ideaRoll.notes = [];
+
+  // Build scale note pool (within 2 octaves of root)
+  const pool = [];
+  for (let oct = 0; oct < 2; oct++) {
+    scale.forEach(deg => pool.push(root + deg + oct*12));
+  }
+
+  const totalSteps = ideaRoll.bars * 16;
+  const role = state.idea.role || 'melody';
+
+  if (role === 'groove') {
+    // Rhythmic pattern on single pitch
+    const kickPitch = root - 12;
+    const patterns = {
+      'club-banger':   [0,4,8,12],
+      'festival-epic': [0,3,6,9,12],
+      'late-night-deep':[0,6,12],
+      'peak-time':     [0,2,4,6,8,10,12,14],
+      'journey':       [0,4,8,10,12],
+    };
+    const pat = patterns[arc] || [0,4,8,12];
+    pat.forEach(step => {
+      const row = ideaRoll.rows - 1 - Math.round((kickPitch - root + 12) / 24 * ideaRoll.rows);
+      ideaRoll.notes.push({ row: Math.min(ideaRoll.rows-1, Math.max(0, row)), step, len: 1, vel: 100 });
+    });
+  } else if (role === 'bass') {
+    // Root movement — sparse, lower register
+    const bassNotes = [root-12, root-12+scale[4], root-12+scale[2]];
+    const steps = arc === 'peak-time' ? [0,4,6,10,12] : [0,8,12];
+    steps.forEach((step, i) => {
+      const midi = bassNotes[i % bassNotes.length];
+      const row  = Math.round((root+12 - midi) / 24 * ideaRoll.rows);
+      ideaRoll.notes.push({ row: Math.min(ideaRoll.rows-1, Math.max(0,row)), step, len: arc==='club-banger' ? 3 : 7, vel: 110 });
+    });
+  } else if (role === 'arp') {
+    // Rapid arpeggiated pattern through scale degrees
+    const arpPool = scale.slice(0,4).map(d => root+d);
+    const arpRates = { 'club-banger':1,'festival-epic':2,'late-night-deep':2,'peak-time':1,'journey':2 };
+    const rate = arpRates[arc] || 2;
+    for (let s = 0; s < totalSteps; s += rate) {
+      const midi = arpPool[Math.floor(s/rate) % arpPool.length];
+      const row  = Math.round((root+12 - midi) / 24 * ideaRoll.rows);
+      ideaRoll.notes.push({ row: Math.min(ideaRoll.rows-1, Math.max(0,row)), step:s, len:rate, vel: 85 + (s%4===0?15:0) });
+    }
+  } else {
+    // Melody / Lead — phrase based on atmosphere
+    const phrases = {
+      'dark-industrial': [[0,0],[4,2],[6,4],[8,0],[10,6],[12,3]],
+      'euphoric':        [[0,4],[2,5],[4,6],[6,5],[8,4],[10,6],[12,7],[14,5]],
+      'hypnotic':        [[0,0],[4,0],[6,2],[8,0],[12,4],[14,2]],
+      'melancholic':     [[0,4],[3,3],[6,2],[9,0],[12,3],[14,1]],
+      'tribal':          [[0,0],[2,4],[4,0],[6,4],[8,0],[10,4],[12,0],[14,4]],
+    };
+    const phrase = phrases[atmo] || phrases['euphoric'];
+    const lengths= { 'dark-industrial':3,'euphoric':2,'hypnotic':4,'melancholic':3,'tribal':2 };
+    const noteLen = lengths[atmo] || 2;
+    phrase.forEach(([step, degIdx]) => {
+      if (step >= totalSteps) return;
+      const deg  = scale[degIdx % scale.length];
+      const midi = root + deg;
+      const row  = Math.round((root+12 - midi) / 24 * ideaRoll.rows);
+      ideaRoll.notes.push({ row: Math.min(ideaRoll.rows-1, Math.max(0,row)), step, len:noteLen, vel: step===0 ? 110 : 90 });
+    });
+  }
+
+  drawIdeaRoll();
+  commitIdeaRollToState();
+  document.getElementById('idea-roll-status').textContent = `Suggested ${ideaRoll.notes.length} notes — tweak freely then hit Build.`;
+}
+
+// ── Quantise all notes to current snap ──
+function quantiseIdeaRoll() {
+  const snap = ideaRoll.snap;
+  ideaRoll.notes = ideaRoll.notes.map(n => ({
+    ...n,
+    step: Math.round(n.step/snap)*snap,
+    len:  Math.max(snap, Math.round(n.len/snap)*snap),
+  }));
+  drawIdeaRoll();
+  commitIdeaRollToState();
+}
+
+// ── Parse plain text description → pitch/rhythm parameters ──
+function parseIdeaText() {
+  const text = (document.getElementById('idea-text')?.value || '').toLowerCase();
+  const show = document.getElementById('idea-parsed');
+  if (!show || !text.trim()) return;
+
+  // Key detection
+  const keyMap = {
+    'minor':'Am','dark':'Am','sad':'Am','melancholic':'Am','dorian':'Dm',
+    'phrygian':'Em','major':'C','happy':'C','uplifting':'C','tribal':'Dm',
+  };
+  let detectedKey = 'Am';
+  Object.entries(keyMap).forEach(([word, key]) => { if (text.includes(word)) detectedKey = key; });
+
+  // BPM feel
+  const bpmFeel = text.includes('slow') || text.includes('deep') ? '120–124' :
+                  text.includes('fast') || text.includes('peak') || text.includes('driving') ? '132–138' :
+                  text.includes('energetic') || text.includes('banger') ? '128–132' : '126–130';
+
+  // Phrase length
+  const phrase = text.includes('four-note') || text.includes('4 note') ? '1 bar' :
+                 text.includes('eight') || text.includes('8 note') ? '2 bars' :
+                 text.includes('long') ? '4 bars' : '2 bars';
+
+  // Character
+  const chars = [];
+  if (text.includes('dark') || text.includes('heavy')) chars.push('dark');
+  if (text.includes('hypnotic') || text.includes('repetitive') || text.includes('minimal')) chars.push('hypnotic');
+  if (text.includes('euphoric') || text.includes('uplifting') || text.includes('happy')) chars.push('euphoric');
+  if (text.includes('cinematic') || text.includes('emotional')) chars.push('cinematic');
+  if (text.includes('tribal') || text.includes('raw')) chars.push('tribal');
+  const character = chars.join(' + ') || 'neutral';
+
+  // Scale mode
+  const scaleMode = text.includes('phrygian') ? 'Phrygian (2nd mode)' :
+                    text.includes('dorian') ? 'Dorian (raised 6th)' :
+                    text.includes('minor') || text.includes('dark') ? 'Natural minor (Aeolian)' :
+                    text.includes('pentatonic') || text.includes('tribal') ? 'Minor pentatonic' :
+                    text.includes('major') ? 'Major (Ionian)' : 'Natural minor';
+
+  // Apply detected key to scene and roll
+  state.scene.key = detectedKey;
+  document.getElementById('tb-key').textContent = detectedKey;
+  const rollKey = document.getElementById('idea-roll-key');
+  if (rollKey) rollKey.value = detectedKey;
+  ideaRoll.rootMidi = KEY_ROOTS[detectedKey] || 69;
+
+  // Set atmosphere from text
+  if (text.includes('dark') || text.includes('industrial')) state.scene.atmosphere = 'dark-industrial';
+  else if (text.includes('euphoric') || text.includes('uplifting')) state.scene.atmosphere = 'euphoric';
+  else if (text.includes('hypnotic') || text.includes('minimal')) state.scene.atmosphere = 'hypnotic';
+  else if (text.includes('cinematic') || text.includes('emotional')) state.scene.atmosphere = 'melancholic';
+  else if (text.includes('tribal') || text.includes('raw')) state.scene.atmosphere = 'tribal';
+
+  // Show parsed
+  show.style.display = 'grid';
+  document.getElementById('ip-key').textContent    = detectedKey;
+  document.getElementById('ip-bpm').textContent    = bpmFeel + ' BPM';
+  document.getElementById('ip-phrase').textContent = phrase;
+  document.getElementById('ip-char').textContent   = character;
+  document.getElementById('ip-scale').textContent  = scaleMode;
+
+  // Auto-suggest in roll if draw pane visible
+  if (!document.getElementById('idea-pane-draw').classList.contains('hidden')) {
+    initIdeaRoll();
+    suggestIdeaPhrase();
+  }
+
+  updateIdeaBlueprintStrip();
+}
+
+// ── Blueprint strip updater ──
+function updateIdeaBlueprintStrip() {
+  const bp = computeIntentBlueprint();
+  const s  = (id,v) => { const e=document.getElementById(id); if(e) e.textContent=v; };
+  s('ibs-bpm',     bp.bpmAdvice);
+  s('ibs-swing',   bp.swing + '%');
+  s('ibs-phrases', (bp.phraseGrowth||[]).join('→') + ' bars');
+  s('ibs-scale',   bp.scaleDegrees?.scaleHint?.split('—')[0]?.trim() || '—');
+  s('ibs-drop',    bp.dropLayers + ' layers');
+
+  // Also sync scene-level intent summary if visible
+  if (typeof updateIntentSummary === 'function') updateIntentSummary();
+}
+
+// ── BUILD TRACK FROM IDEA ──
+function buildTrackFromIdea() {
+  const role  = state.idea.role || 'melody';
+  const notes = state.idea.notes || [];
+  const key   = state.scene.key;
+
+  // Compute intent blueprint from current selections
+  computeIntentBlueprint();
+
+  // Seed the appropriate layer with the idea notes
+  if (role === 'melody' || role === 'arp') {
+    state.melody.notes = notes.length ? notes : state.melody.notes;
+    if (role === 'arp') {
+      // Also put in arp-specific slot
+      state.arp = { notes: [...notes] };
+    }
+  } else if (role === 'bass') {
+    state.bass.notes = notes.length ? notes : state.bass.notes;
+  }
+
+  // Auto-detect BPM from description if not already set
+  const textEl = document.getElementById('idea-text');
+  if (textEl?.value) parseIdeaText();
+
+  addMessage('bot', `<strong>Idea locked in</strong> — ${notes.length} notes as your <em>${role}</em>. ${
+    role==='melody' ? 'Drums and bass will build around your phrase.' :
+    role==='bass'   ? 'Melody and drums will lock to your root movement.' :
+    role==='groove' ? 'Everything layers on top of your groove.' :
+    'The arp pattern seeds the harmonic framework.'
+  } Blueprint: <strong>${(state.scene.energyArc||'').replace(/-/g,' ')} · ${(state.scene.atmosphere||'').replace(/-/g,' ')}</strong>. Swinging at <strong>${state.intent?.swing||10}%</strong>. Let's build.`);
+
+  // Navigate to scene to confirm settings, then straight to arrangement
+  navigateTo('scene');
+
+  // Small delay then skip straight to arrangement if we have enough to go on
+  if (notes.length) {
+    setTimeout(() => {
+      // Auto-lock scene and go to arrangement
+      document.getElementById('scene-next')?.click();
+    }, 800);
+  }
+}
+
+
 document.addEventListener('DOMContentLoaded', () => {
   initChips();
   updateIntentSummary();
+  initIdeaScreen();
   initTrackLengthInput();
   initBPM();
   initStepNav();
@@ -496,7 +992,7 @@ function goToStep(step) {
   document.querySelectorAll('.nav-step').forEach(n => n.classList.remove('active'));
   document.querySelector(`.nav-step[data-step="${step}"]`).classList.add('active');
   // Mark previous steps as completed
-  const steps = ['scene','arrangement','drums','bass','melody','pads','export'];
+  const steps = ['idea','scene','arrangement','drums','bass','melody','pads','export'];
   const idx = steps.indexOf(step);
   steps.forEach((s, i) => {
     const nav = document.querySelector(`.nav-step[data-step="${s}"]`);
@@ -2529,6 +3025,8 @@ function initAutoUpdater() {
   restartBtn.addEventListener('click', () => window.beatforge.updater.install());
   dismissBtn.addEventListener('click', hideToast);
 }
+
+
 
 document.addEventListener('DOMContentLoaded', () => {
   // initAutoUpdater is called after DOMContentLoaded alongside other inits

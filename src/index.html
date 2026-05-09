@@ -34,7 +34,11 @@
 
       <!-- LEFT: STEP NAVIGATOR -->
       <nav id="step-nav">
-        <div class="nav-step active" data-step="scene">
+        <div class="nav-step active" data-step="idea">
+          <div class="nav-num">✦</div>
+          <div class="nav-label">Idea</div>
+        </div>
+        <div class="nav-step" data-step="scene">
           <div class="nav-num">1</div>
           <div class="nav-label">Scene</div>
         </div>
@@ -67,8 +71,130 @@
       <!-- CENTER: WORKSPACE -->
       <div id="workspace">
 
+
+        <!-- ─── STEP 0: THE IDEA ─── -->
+        <section class="step-panel active" id="panel-idea">
+          <div class="panel-header idea-header">
+            <h2>What's your idea?</h2>
+            <p class="panel-desc">Start with the spark. Describe it, draw it, or both — then BF builds the whole track around it.</p>
+          </div>
+
+          <!-- MODE TOGGLE -->
+          <div class="idea-mode-bar">
+            <button class="idea-mode-btn active" data-mode="describe">✍ Describe it</button>
+            <button class="idea-mode-btn" data-mode="draw">🎹 Draw it</button>
+            <button class="idea-mode-btn" data-mode="both">⚡ Both</button>
+          </div>
+
+          <!-- DESCRIBE PANEL -->
+          <div class="idea-pane" id="idea-pane-describe">
+            <div class="idea-describe-wrap">
+              <textarea id="idea-text" class="idea-textarea" placeholder="e.g. dark four-note riff starting on the 5th, drops down by a tone then resolves — tight, hypnotic, minimal..."></textarea>
+              <button class="idea-parse-btn" id="idea-parse-btn">⚡ Parse Idea</button>
+            </div>
+            <div class="idea-parsed" id="idea-parsed" style="display:none">
+              <div class="ip-row"><span class="ip-key">Detected key</span><span class="ip-val" id="ip-key">—</span></div>
+              <div class="ip-row"><span class="ip-key">BPM feel</span><span class="ip-val" id="ip-bpm">—</span></div>
+              <div class="ip-row"><span class="ip-key">Phrase length</span><span class="ip-val" id="ip-phrase">—</span></div>
+              <div class="ip-row"><span class="ip-key">Character</span><span class="ip-val" id="ip-char">—</span></div>
+              <div class="ip-row"><span class="ip-key">Scale mode</span><span class="ip-val" id="ip-scale">—</span></div>
+            </div>
+          </div>
+
+          <!-- DRAW PANEL (Piano Roll) -->
+          <div class="idea-pane hidden" id="idea-pane-draw">
+            <div class="idea-roll-toolbar">
+              <span class="irt-label">Key:</span>
+              <select id="idea-roll-key" class="irt-select">
+                <option value="Am">Am</option><option value="Cm">Cm</option>
+                <option value="Dm">Dm</option><option value="Em">Em</option>
+                <option value="Fm">Fm</option><option value="Gm">Gm</option>
+                <option value="Bm">Bm</option><option value="Bbm">B♭m</option>
+              </select>
+              <span class="irt-label">Bars:</span>
+              <select id="idea-roll-bars" class="irt-select">
+                <option value="1">1</option><option value="2" selected>2</option>
+                <option value="4">4</option><option value="8">8</option>
+              </select>
+              <span class="irt-label">Snap:</span>
+              <select id="idea-roll-snap" class="irt-select">
+                <option value="1">1/16</option><option value="2">1/8</option>
+                <option value="4">1/4</option>
+              </select>
+              <button class="irt-btn" id="idea-roll-clear">✕ Clear</button>
+              <button class="irt-btn" id="idea-roll-suggest">⚡ Suggest</button>
+              <button class="irt-btn" id="idea-roll-quant">⊞ Quantise</button>
+            </div>
+            <div class="idea-roll-wrap">
+              <div class="idea-roll-keys" id="idea-roll-keys"></div>
+              <div class="idea-roll-grid-wrap">
+                <canvas id="idea-roll-canvas" class="idea-roll-canvas"></canvas>
+              </div>
+            </div>
+            <div class="idea-roll-status" id="idea-roll-status">Click to place notes · Drag to resize · Right-click to delete</div>
+          </div>
+
+          <!-- IDEA ROLE -->
+          <div class="idea-role-wrap">
+            <p class="idea-role-label">This idea is my…</p>
+            <div class="idea-role-btns">
+              <button class="idea-role-btn active" data-role="melody">🎵 Melody / Lead</button>
+              <button class="idea-role-btn" data-role="bass">🔊 Bassline</button>
+              <button class="idea-role-btn" data-role="groove">🥁 Groove / Rhythm</button>
+              <button class="idea-role-btn" data-role="arp">🌀 Arp Pattern</button>
+            </div>
+          </div>
+
+          <!-- QUICK INTENT (condensed) -->
+          <div class="idea-intent-row">
+            <div class="iir-group">
+              <span class="iir-label">⚡ Arc</span>
+              <div class="chip-group chip-group-sm" data-field="energyArc">
+                <button class="chip active" data-val="club-banger">Club</button>
+                <button class="chip" data-val="festival-epic">Festival</button>
+                <button class="chip" data-val="late-night-deep">Late Night</button>
+                <button class="chip" data-val="peak-time">Peak</button>
+                <button class="chip" data-val="journey">Journey</button>
+              </div>
+            </div>
+            <div class="iir-group">
+              <span class="iir-label">🌑 Atmosphere</span>
+              <div class="chip-group chip-group-sm" data-field="atmosphere">
+                <button class="chip" data-val="dark-industrial">Dark</button>
+                <button class="chip active" data-val="euphoric">Euphoric</button>
+                <button class="chip" data-val="hypnotic">Hypnotic</button>
+                <button class="chip" data-val="melancholic">Cinematic</button>
+                <button class="chip" data-val="tribal">Tribal</button>
+              </div>
+            </div>
+            <div class="iir-group">
+              <span class="iir-label">◈ Density</span>
+              <div class="chip-group chip-group-sm" data-field="density">
+                <button class="chip" data-val="minimal">Minimal</button>
+                <button class="chip active" data-val="balanced">Balanced</button>
+                <button class="chip" data-val="dense">Dense</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- BLUEPRINT PREVIEW strip -->
+          <div class="idea-blueprint-strip" id="idea-blueprint-strip">
+            <span class="ibs-item"><span class="ibs-key">BPM</span><span class="ibs-val" id="ibs-bpm">—</span></span>
+            <span class="ibs-sep">·</span>
+            <span class="ibs-item"><span class="ibs-key">Swing</span><span class="ibs-val" id="ibs-swing">—</span></span>
+            <span class="ibs-sep">·</span>
+            <span class="ibs-item"><span class="ibs-key">Phrases</span><span class="ibs-val" id="ibs-phrases">—</span></span>
+            <span class="ibs-sep">·</span>
+            <span class="ibs-item"><span class="ibs-key">Scale</span><span class="ibs-val" id="ibs-scale">—</span></span>
+            <span class="ibs-sep">·</span>
+            <span class="ibs-item"><span class="ibs-key">Drop</span><span class="ibs-val" id="ibs-drop">— layers</span></span>
+          </div>
+
+          <button class="btn-next idea-build-btn" id="idea-build-btn">🔥 Build the track around this idea</button>
+        </section>
+
         <!-- ─── STEP 1: SCENE SETUP ─── -->
-        <section class="step-panel active" id="panel-scene">
+        <section class="step-panel" id="panel-scene">
           <div class="panel-header">
             <h2>Set the Scene</h2>
             <p class="panel-desc">Define the DNA of your track. Everything flows from here.</p>
