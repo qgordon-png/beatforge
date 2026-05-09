@@ -918,9 +918,9 @@ function buildTrackFromIdea() {
     'The arp pattern seeds the harmonic framework.'
   } Blueprint: <strong>${(state.scene.energyArc||'').replace(/-/g,' ')} · ${(state.scene.atmosphere||'').replace(/-/g,' ')}</strong>. Swinging at <strong>${state.intent?.swing||10}%</strong>. Let's build.`);
 
-  // Go straight to arrangement — idea IS the scene setup
+  // Go straight to drums — first real creative step after locking the idea
   setTimeout(() => {
-    navigateTo('arrangement');
+    goToStep('drums');
   }, 300);
 }
 
