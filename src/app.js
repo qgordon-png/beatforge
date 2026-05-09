@@ -1921,7 +1921,7 @@ function exportPadsMidi() {
   addMessage('bot', `Pads exported. Long chords in ${state.scene.key}. <em>Beautiful.</em>`);
 }
 
-function exportFullMidiPack() {
+async function exportFullMidiPack() {
   const hasAnything = Object.values(state.drums.pattern).some(v => v) ||
     state.bass.notes.length || state.melody.notes.length || state.pads.notes.length;
   if (!hasAnything) {
@@ -1929,29 +1929,40 @@ function exportFullMidiPack() {
     return;
   }
 
-  let exported = [];
+  const bpm  = state.scene.bpm;
+  const key  = state.scene.key;
+  const safe = `BeatForge_${key.replace('#','s')}_${bpm}bpm`;
+  const files = [];
+  const exported = [];
+
   if (Object.values(state.drums.pattern).some(v => v)) {
-    downloadMidi(buildDrumMidi(state.drums.pattern, state.scene.bpm, 2),
-      `BeatForge_Drums_${state.scene.bpm}bpm.mid`);
+    files.push({ name: `${safe}_Drums.mid`, bytes: buildDrumMidi(state.drums.pattern, bpm, 2) });
     exported.push('Drums');
   }
   if (state.bass.notes.length) {
-    downloadMidi(buildNotesMidi(state.bass.notes, 0, state.scene.bpm, 'BeatForge Bass'),
-      `BeatForge_Bass_${state.scene.key}.mid`);
+    files.push({ name: `${safe}_Bass.mid`, bytes: buildNotesMidi(state.bass.notes, 0, bpm, 'BeatForge Bass') });
     exported.push('Bass');
   }
   if (state.melody.notes.length) {
-    downloadMidi(buildNotesMidi(state.melody.notes, 1, state.scene.bpm, 'BeatForge Melody'),
-      `BeatForge_Melody_${state.scene.key}.mid`);
+    files.push({ name: `${safe}_Melody.mid`, bytes: buildNotesMidi(state.melody.notes, 1, bpm, 'BeatForge Melody') });
     exported.push('Melody');
   }
   if (state.pads.notes.length) {
-    downloadMidi(buildNotesMidi(state.pads.notes, 2, state.scene.bpm, 'BeatForge Pads'),
-      `BeatForge_Pads_${state.scene.key}.mid`);
+    files.push({ name: `${safe}_Pads.mid`, bytes: buildNotesMidi(state.pads.notes, 2, bpm, 'BeatForge Pads') });
     exported.push('Pads');
   }
 
-  addMessage('bot', `Exported ${exported.length} MIDI files: <strong>${exported.join(', ')}</strong>. Drop each one onto a separate channel in Ableton. Drums → Drum Rack. Everything else → your synth of choice. <em>Now go make something ridiculous.</em>`);
+  // Bundle everything into one ZIP
+  const zip = buildZip(files);
+  const zipName = `${safe}_MIDIPack.zip`;
+
+  if (isElectron()) {
+    await window.beatforge.midi.save(zipName, Array.from(zip));
+  } else {
+    downloadBytes(zip, zipName, 'application/zip');
+  }
+
+  addMessage('bot', `📦 <strong>${zipName}</strong> saved — ${exported.length} MIDI files inside: <strong>${exported.join(', ')}</strong>. Unzip, drop each onto a separate Ableton channel. Drums → Drum Rack. Everything else → your synth of choice. <em>One file. No mess. You're welcome.</em>`);
 }
 
 
