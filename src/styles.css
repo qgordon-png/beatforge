@@ -1201,3 +1201,37 @@ html, body { height:100%; background:var(--bg); color:var(--text); font-family:'
   transition: opacity .15s; font-family: inherit;
 }
 .idea-build-btn:hover { opacity: .9; }
+
+/* ── UPDATE BUTTON ── */
+.tb-update-btn {
+  background: #1a1a1a;
+  border: 1px solid #c9a84c55;
+  color: #c9a84c;
+  padding: 3px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 10px;
+  font-family: inherit;
+  font-weight: 600;
+  letter-spacing: .3px;
+  transition: all .15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.tb-update-btn:hover { background: #c9a84c22; border-color: #c9a84c; }
+.tb-update-btn.tb-update-ready {
+  background: #c9a84c;
+  color: #000;
+  border-color: #c9a84c;
+  animation: pulse-gold .8s ease-in-out infinite alternate;
+}
+@keyframes pulse-gold {
+  from { box-shadow: 0 0 0 0 #c9a84c44; }
+  to   { box-shadow: 0 0 8px 4px #c9a84c22; }
+}
+.tb-update-status {
+  font-size: 10px;
+  color: #666;
+  white-space: nowrap;
+}

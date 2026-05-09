@@ -12,14 +12,26 @@ contextBridge.exposeInMainWorld('beatforge', {
     generate: (prompt, context) => ipcRenderer.invoke('ai:generate', { prompt, context }),
   },
   app: {
-    getVersion: () => '0.2.0',
+    getVersion: () => ipcRenderer.invoke('app:getVersion'),
     isElectron: true,
   },
   updater: {
-    // Listen for update status messages from main process
-    onStatus:   (cb) => ipcRenderer.on('updater:status',   (_, data) => cb(data)),
-    onProgress: (cb) => ipcRenderer.on('updater:progress', (_, data) => cb(data)),
-    // Tell main to quit and install
-    install: () => ipcRenderer.send('updater:install'),
+    onStatus:        (cb) => ipcRenderer.on('updater:status',        (_, d) => cb(d)),
+    onProgress:      (cb) => ipcRenderer.on('updater:progress',      (_, d) => cb(d)),
+    onDownloaded:    (cb) => ipcRenderer.on('updater:downloaded',    (_, d) => cb(d)),
+    onNotAvailable:  (cb) => ipcRenderer.on('updater:not-available', (_, d) => cb(d)),
+    onAvailable:     (cb) => ipcRenderer.on('updater:available',     (_, d) => cb(d)),
+    checkForUpdates: ()   => ipcRenderer.send('updater:check'),
+    install:         ()   => ipcRenderer.send('updater:install'),
   }
+});
+
+// electronAPI — used by updater UI in app.js
+contextBridge.exposeInMainWorld('electronAPI', {
+  onUpdateAvailable:    (cb) => ipcRenderer.on('updater:available',     (_, d) => cb(d)),
+  onUpdateDownloaded:   (cb) => ipcRenderer.on('updater:downloaded',    (_, d) => cb(d)),
+  onUpdateProgress:     (cb) => ipcRenderer.on('updater:progress',      (_, d) => cb(d)),
+  onUpdateNotAvailable: (cb) => ipcRenderer.on('updater:not-available', (_, d) => cb(d)),
+  checkForUpdates:      ()   => ipcRenderer.send('updater:check'),
+  installUpdate:        ()   => ipcRenderer.send('updater:install'),
 });

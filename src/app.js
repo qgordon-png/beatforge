@@ -845,23 +845,104 @@ function buildTrackFromIdea() {
     'The arp pattern seeds the harmonic framework.'
   } Blueprint: <strong>${(state.scene.energyArc||'').replace(/-/g,' ')} · ${(state.scene.atmosphere||'').replace(/-/g,' ')}</strong>. Swinging at <strong>${state.intent?.swing||10}%</strong>. Let's build.`);
 
-  // Navigate to scene to confirm settings, then straight to arrangement
-  navigateTo('scene');
-
-  // Small delay then skip straight to arrangement if we have enough to go on
-  if (notes.length) {
-    setTimeout(() => {
-      // Auto-lock scene and go to arrangement
-      document.getElementById('scene-next')?.click();
-    }, 800);
-  }
+  // Go straight to arrangement — idea IS the scene setup
+  setTimeout(() => {
+    navigateTo('arrangement');
+  }, 300);
 }
 
+
+
+// ── AUTO UPDATER UI ──────────────────────────────────────────
+function initUpdaterUI() {
+  const btn    = document.getElementById('tb-update-btn');
+  const status = document.getElementById('tb-update-status');
+  if (!btn || !status) return;
+
+  // Listen for update events from main process
+  if (window.electronAPI?.onUpdateAvailable) {
+    window.electronAPI.onUpdateAvailable((info) => {
+      status.textContent = `v${info.version} ready`;
+      btn.style.display = 'inline-flex';
+      btn.textContent = '↑ Install Update';
+      btn.classList.add('tb-update-ready');
+    });
+  }
+
+  if (window.electronAPI?.onUpdateDownloaded) {
+    window.electronAPI.onUpdateDownloaded(() => {
+      btn.textContent = '↑ Restart & Install';
+      btn.classList.add('tb-update-ready');
+      btn.style.display = 'inline-flex';
+    });
+  }
+
+  if (window.electronAPI?.onUpdateProgress) {
+    window.electronAPI.onUpdateProgress((prog) => {
+      status.textContent = `Downloading… ${Math.round(prog.percent)}%`;
+      btn.style.display = 'none';
+    });
+  }
+
+  if (window.electronAPI?.onUpdateNotAvailable) {
+    window.electronAPI.onUpdateNotAvailable(() => {
+      status.textContent = 'Up to date ✓';
+      btn.style.display = 'none';
+      setTimeout(() => { status.textContent = ''; }, 3000);
+    });
+  }
+
+  // Manual check button
+  btn.addEventListener('click', () => {
+    const isReady = btn.classList.contains('tb-update-ready');
+    if (isReady) {
+      // Install and restart
+      window.electronAPI?.installUpdate?.();
+    } else {
+      // Check for updates
+      btn.textContent = 'Checking…';
+      btn.style.display = 'inline-flex';
+      window.electronAPI?.checkForUpdates?.();
+      setTimeout(() => {
+        if (!btn.classList.contains('tb-update-ready')) {
+          btn.style.display = 'none';
+          status.textContent = 'Up to date ✓';
+          setTimeout(() => { status.textContent = ''; }, 2000);
+        }
+      }, 8000);
+    }
+  });
+}
+
+// Always show "Check for update" button on hover of titlebar version
+function initUpdateCheckTrigger() {
+  const ver = document.querySelector('.tb-version');
+  const btn = document.getElementById('tb-update-btn');
+  if (!ver || !btn) return;
+  ver.style.cursor = 'pointer';
+  ver.title = 'Click to check for updates';
+  ver.addEventListener('click', () => {
+    btn.style.display = 'inline-flex';
+    btn.textContent = '↑ Check for update';
+    btn.classList.remove('tb-update-ready');
+    window.electronAPI?.checkForUpdates?.();
+    btn.textContent = 'Checking…';
+    setTimeout(() => {
+      if (!btn.classList.contains('tb-update-ready')) {
+        btn.style.display = 'none';
+        const status = document.getElementById('tb-update-status');
+        if (status) { status.textContent = 'Up to date ✓'; setTimeout(()=>{status.textContent=''},2500); }
+      }
+    }, 8000);
+  });
+}
 
 document.addEventListener('DOMContentLoaded', () => {
   initChips();
   updateIntentSummary();
   initIdeaScreen();
+  initUpdaterUI();
+  initUpdateCheckTrigger();
   initTrackLengthInput();
   initBPM();
   initStepNav();

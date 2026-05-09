@@ -11,38 +11,28 @@ autoUpdater.autoDownload = true;         // download silently in background
 autoUpdater.autoInstallOnAppQuit = true; // install when user quits
 
 function setupAutoUpdater() {
-  // Check for updates 3 seconds after launch (give the window time to load)
-  setTimeout(() => autoUpdater.checkForUpdates(), 3000);
+  // Check for updates 3 seconds after launch
+  setTimeout(() => autoUpdater.checkForUpdates().catch(()=>{}), 3000);
 
   autoUpdater.on('update-available', (info) => {
-    mainWindow?.webContents.send('updater:status', {
-      type: 'downloading',
-      version: info.version,
-      message: `New version ${info.version} downloading in the background...`
-    });
+    mainWindow?.webContents.send('updater:available', { version: info.version });
   });
 
-  autoUpdater.on('update-not-available', () => {
-    // Silently do nothing — don't bother the user
+  autoUpdater.on('update-not-available', (info) => {
+    mainWindow?.webContents.send('updater:not-available', { version: info?.version });
   });
 
   autoUpdater.on('download-progress', (progress) => {
-    mainWindow?.webContents.send('updater:progress', {
-      percent: Math.round(progress.percent)
-    });
+    mainWindow?.webContents.send('updater:progress', { percent: Math.round(progress.percent) });
   });
 
   autoUpdater.on('update-downloaded', (info) => {
-    mainWindow?.webContents.send('updater:status', {
-      type: 'ready',
-      version: info.version,
-      message: `BeatForge ${info.version} ready — restart to update`
-    });
+    mainWindow?.webContents.send('updater:downloaded', { version: info.version });
   });
 
   autoUpdater.on('error', (err) => {
-    // Silently log — don't crash or annoy the user over update failures
     console.error('AutoUpdater error:', err.message);
+    mainWindow?.webContents.send('updater:not-available', { error: err.message });
   });
 }
 
@@ -90,6 +80,18 @@ app.on('activate', () => {
 // ─── IPC: RESTART & INSTALL UPDATE ───
 ipcMain.on('updater:install', () => {
   autoUpdater.quitAndInstall();
+});
+
+// ─── IPC: MANUAL CHECK FOR UPDATES ───
+ipcMain.on('updater:check', () => {
+  autoUpdater.checkForUpdates().catch(err => {
+    mainWindow?.webContents.send('updater:not-available', { error: err.message });
+  });
+});
+
+// ─── IPC: GET APP VERSION ───
+ipcMain.handle('app:getVersion', () => {
+  return app.getVersion();
 });
 
 // ─── IPC: MIDI OUTPUTS ───
