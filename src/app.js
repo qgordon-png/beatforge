@@ -457,6 +457,9 @@ function initIdeaScreen() {
     ideaRoll.notes = [];
     drawIdeaRoll();
   });
+  document.getElementById('idea-play-btn')?.addEventListener('click', () => {
+    playIdeaRoll();
+  });
   document.getElementById('idea-roll-suggest')?.addEventListener('click', suggestIdeaPhrase);
   document.getElementById('idea-roll-quant')?.addEventListener('click', quantiseIdeaRoll);
 
@@ -583,6 +586,12 @@ function attachIdeaRollEvents() {
       ideaRoll.notes = ideaRoll.notes.filter(n => !(n.row===row && step>=n.step && step<n.step+n.len));
       drawIdeaRoll(); return;
     }
+    // Play the note we just touched
+    const key = document.getElementById('idea-roll-key')?.value || 'Am';
+    const root = KEY_ROOTS[key] || 69;
+    const midiNote = root + 12 - row;
+    const role = state.idea?.role || 'melody';
+    BF_Audio.playNote(midiNote, role, 0.3).catch(()=>{});
     // Check if clicking existing note right edge (resize)
     const snap = ideaRoll.snap;
     const snapped = Math.round(step/snap)*snap;
@@ -629,13 +638,77 @@ function attachIdeaRollEvents() {
 function commitIdeaRollToState() {
   const key   = document.getElementById('idea-roll-key')?.value || 'Am';
   const root  = KEY_ROOTS[key] || 69;
-  // Convert roll notes → MIDI note objects
   state.idea.notes = ideaRoll.notes.map(n => ({
     note:     root + 12 - n.row,
     time:     n.step,
     duration: n.len,
     velocity: n.vel,
   }));
+}
+
+// ── Idea Roll Transport ──
+function playIdeaRoll() {
+  const role  = state.idea?.role || 'melody';
+  const bpm   = parseInt(document.getElementById('bpm-val')?.value) || 128;
+  const key   = document.getElementById('idea-roll-key')?.value || 'Am';
+  const root  = KEY_ROOTS[key] || 69;
+
+  const notes = ideaRoll.notes.map(n => ({
+    note: root + 12 - n.row,
+    step: n.step,
+    len:  n.len,
+    vel:  n.vel,
+  }));
+
+  if (!notes.length) {
+    document.getElementById('idea-roll-status').textContent = 'Draw some notes first, then hit Play.';
+    return;
+  }
+
+  if (BF_Audio.getIsPlaying()) {
+    BF_Audio.stopAll();
+    updateIdeaTransport(false);
+    return;
+  }
+
+  updateIdeaTransport(true);
+  document.getElementById('idea-roll-status').textContent = '▶ Playing…';
+
+  BF_Audio.playSequence(notes, bpm, role,
+    (step) => highlightRollStep(step),
+    () => {
+      updateIdeaTransport(false);
+      clearRollHighlight();
+      document.getElementById('idea-roll-status').textContent = 'Click to place notes · Drag to resize · Right-click to delete';
+    }
+  ).catch(err => console.warn('Audio play error:', err));
+}
+
+function updateIdeaTransport(playing) {
+  const btn = document.getElementById('idea-play-btn');
+  if (!btn) return;
+  btn.textContent = playing ? '⏹ Stop' : '▶ Play idea';
+  btn.classList.toggle('playing', playing);
+}
+
+function highlightRollStep(step) {
+  // Draw a playhead line on the canvas
+  const canvas = document.getElementById('idea-roll-canvas');
+  if (!canvas) return;
+  const totalSteps = ideaRoll.bars * 16;
+  const stepW = canvas.width / totalSteps;
+  drawIdeaRoll();
+  const ctx = canvas.getContext('2d');
+  ctx.strokeStyle = '#ffffff55';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(step * stepW, 0);
+  ctx.lineTo(step * stepW, canvas.height);
+  ctx.stroke();
+}
+
+function clearRollHighlight() {
+  drawIdeaRoll();
 }
 
 // ── Suggest a phrase based on intent ──
@@ -936,6 +1009,214 @@ function initUpdateCheckTrigger() {
     }, 8000);
   });
 }
+
+
+// ════════════════════════════════════════════════════════════
+// BEATFORGE AUDIO ENGINE — Tone.js
+// Synth playback for idea roll, drums, bass, melody previews.
+// ════════════════════════════════════════════════════════════
+
+const BF_Audio = (() => {
+  let started      = false;
+  let melodySynth  = null;
+  let bassSynth    = null;
+  let drumSynths   = {};
+  let padSynth     = null;
+  let playSeq      = null;      // active Tone.Sequence
+  let isPlaying    = false;
+
+  // ── Ensure AudioContext is started (needs user gesture) ──
+  async function start() {
+    if (started) return;
+    await Tone.start();
+    started = true;
+    buildSynths();
+  }
+
+  // ── Build all synth voices ──
+  function buildSynths() {
+    // Melody / Lead — bright FM synth
+    melodySynth = new Tone.PolySynth(Tone.FMSynth, {
+      harmonicity: 3.5,
+      modulationIndex: 10,
+      oscillator: { type: 'sine' },
+      envelope: { attack: 0.01, decay: 0.1, sustain: 0.4, release: 0.8 },
+      modulation: { type: 'square' },
+      modulationEnvelope: { attack: 0.01, decay: 0.2, sustain: 0.3, release: 0.5 },
+      volume: -6,
+    }).toDestination();
+
+    // Bass — warm MonoSynth
+    bassSynth = new Tone.MonoSynth({
+      oscillator: { type: 'sawtooth' },
+      envelope:   { attack: 0.01, decay: 0.15, sustain: 0.5, release: 0.4 },
+      filterEnvelope: { attack: 0.01, decay: 0.3, sustain: 0.2, release: 0.4, baseFrequency: 200, octaves: 3 },
+      volume: -4,
+    }).toDestination();
+
+    // Pad — lush PolySynth
+    padSynth = new Tone.PolySynth(Tone.Synth, {
+      oscillator: { type: 'triangle' },
+      envelope: { attack: 0.4, decay: 0.3, sustain: 0.8, release: 2.0 },
+      volume: -10,
+    });
+    const padReverb = new Tone.Reverb({ decay: 4, wet: 0.6 }).toDestination();
+    padSynth.connect(padReverb);
+
+    // Drums — MembraneSynth (kick) + MetalSynth (hats) + NoiseSynth (snare)
+    drumSynths = {
+      kick: new Tone.MembraneSynth({
+        pitchDecay: 0.08, octaves: 8,
+        envelope: { attack: 0.001, decay: 0.3, sustain: 0, release: 0.2 },
+        volume: -2,
+      }).toDestination(),
+
+      snare: new Tone.NoiseSynth({
+        noise: { type: 'white' },
+        envelope: { attack: 0.001, decay: 0.15, sustain: 0, release: 0.1 },
+        volume: -6,
+      }).toDestination(),
+
+      chh: new Tone.MetalSynth({
+        frequency: 400, envelope: { attack: 0.001, decay: 0.04, release: 0.01 },
+        harmonicity: 5.1, modulationIndex: 32, resonance: 4000, octaves: 1.5,
+        volume: -14,
+      }).toDestination(),
+
+      ohh: new Tone.MetalSynth({
+        frequency: 400, envelope: { attack: 0.001, decay: 0.25, release: 0.1 },
+        harmonicity: 5.1, modulationIndex: 32, resonance: 4000, octaves: 1.5,
+        volume: -12,
+      }).toDestination(),
+
+      perc: new Tone.MembraneSynth({
+        pitchDecay: 0.03, octaves: 4,
+        envelope: { attack: 0.001, decay: 0.1, sustain: 0, release: 0.05 },
+        volume: -10,
+      }).toDestination(),
+    };
+  }
+
+  // ── Trigger single note (for piano roll click feedback) ──
+  async function playNote(midiNote, role='melody', durationSec=0.25) {
+    await start();
+    const freq = Tone.Frequency(midiNote, 'midi').toFrequency();
+    const dur  = `${durationSec}s`;
+    if (role === 'bass') {
+      bassSynth.triggerAttackRelease(freq, dur);
+    } else if (role === 'pad') {
+      padSynth.triggerAttackRelease(freq, dur);
+    } else {
+      melodySynth.triggerAttackRelease(freq, dur);
+    }
+  }
+
+  // ── Trigger single drum hit ──
+  async function playDrum(type) {
+    await start();
+    const now = Tone.now();
+    if (type === 'kick')  drumSynths.kick.triggerAttackRelease('C1', '8n', now);
+    if (type === 'snare') drumSynths.snare.triggerAttackRelease('16n', now);
+    if (type === 'chh')   drumSynths.chh.triggerAttackRelease('32n', now);
+    if (type === 'ohh')   drumSynths.ohh.triggerAttackRelease('8n', now);
+    if (type === 'perc')  drumSynths.perc.triggerAttackRelease('G2', '16n', now);
+  }
+
+  // ── Play a sequence of notes (idea roll / melody preview) ──
+  async function playSequence(notes, bpm, role='melody', onStep, onStop) {
+    await start();
+    stopAll();
+
+    if (!notes || !notes.length) return;
+
+    Tone.getTransport().bpm.value = bpm || 128;
+
+    const ticksPerStep = '16n'; // each step = 1/16 note
+    const synth = role==='bass' ? bassSynth : role==='pad' ? padSynth : melodySynth;
+
+    // Build event map: step → [note events]
+    const stepMap = {};
+    notes.forEach(n => {
+      if (!stepMap[n.step]) stepMap[n.step] = [];
+      stepMap[n.step].push(n);
+    });
+
+    const maxStep = Math.max(...notes.map(n => n.step + n.len));
+    let currentStep = 0;
+
+    playSeq = new Tone.Sequence((time, step) => {
+      if (step >= maxStep) {
+        Tone.getTransport().stop();
+        isPlaying = false;
+        if (onStop) setTimeout(onStop, 100);
+        return;
+      }
+      if (stepMap[step]) {
+        stepMap[step].forEach(n => {
+          const freq = Tone.Frequency(n.note, 'midi').toFrequency();
+          const dur  = `${n.len}*${ticksPerStep}`;
+          if (role === 'bass') {
+            bassSynth.triggerAttackRelease(freq, dur, time, n.vel/127);
+          } else if (role === 'pad') {
+            padSynth.triggerAttackRelease(freq, dur, time, n.vel/127);
+          } else {
+            melodySynth.triggerAttackRelease(freq, dur, time, n.vel/127);
+          }
+        });
+      }
+      if (onStep) onStep(step);
+      currentStep = step;
+    }, [...Array(maxStep+1).keys()], ticksPerStep);
+
+    playSeq.start(0);
+    Tone.getTransport().start();
+    isPlaying = true;
+  }
+
+  // ── Play drum pattern (16 steps) ──
+  async function playDrumPattern(pattern, bpm, bars=1, onStep, onStop) {
+    await start();
+    stopAll();
+    Tone.getTransport().bpm.value = bpm || 128;
+
+    const steps = bars * 16;
+    let step = 0;
+
+    playSeq = new Tone.Sequence((time, i) => {
+      if (i >= steps) {
+        Tone.getTransport().stop();
+        isPlaying = false;
+        if (onStop) setTimeout(onStop, 100);
+        return;
+      }
+      if (pattern.kick?.[i])  drumSynths.kick.triggerAttackRelease('C1','8n',time);
+      if (pattern.snare?.[i]) drumSynths.snare.triggerAttackRelease('16n',time);
+      if (pattern.chh?.[i])   drumSynths.chh.triggerAttackRelease('32n',time);
+      if (pattern.ohh?.[i])   drumSynths.ohh.triggerAttackRelease('8n',time);
+      if (pattern.perc?.[i])  drumSynths.perc.triggerAttackRelease('G2','16n',time);
+      if (onStep) onStep(i);
+      step = i;
+    }, [...Array(steps+1).keys()], '16n');
+
+    playSeq.start(0);
+    Tone.getTransport().start();
+    isPlaying = true;
+  }
+
+  // ── Stop everything ──
+  function stopAll() {
+    if (playSeq) { playSeq.stop(); playSeq.dispose(); playSeq = null; }
+    Tone.getTransport().stop();
+    Tone.getTransport().cancel();
+    isPlaying = false;
+    if (melodySynth) try { melodySynth.releaseAll(); } catch(e){}
+    if (padSynth)    try { padSynth.releaseAll(); }    catch(e){}
+  }
+
+  function getIsPlaying() { return isPlaying; }
+
+  return { start, playNote, playDrum, playSequence, playDrumPattern, stopAll, getIsPlaying };
+})();
 
 document.addEventListener('DOMContentLoaded', () => {
   initChips();
@@ -1253,12 +1534,18 @@ function initSequencer() {
     if (el) { el.classList.add('active'); state.drums.pattern[`ohh-${i}`] = true; }
   });
 
-  // Click to toggle
+  // Click to toggle + audio feedback
   seq.querySelectorAll('.seq-step').forEach(step => {
     step.addEventListener('click', () => {
       step.classList.toggle('active');
       const key = step.dataset.key;
       state.drums.pattern[key] = step.classList.contains('active');
+      if (step.classList.contains('active')) {
+        // Map row id to drum type
+        const drumTypeMap = { kick:'kick', snare:'snare', chh:'chh', ohh:'ohh', perc:'perc' };
+        const type = drumTypeMap[step.dataset.row] || 'kick';
+        BF_Audio.playDrum(type).catch(()=>{});
+      }
     });
   });
 }
@@ -1688,12 +1975,76 @@ function getScale(key) {
 }
 
 // ─── PREVIEW (USING TONE.JS OR WEB AUDIO) ───
-function previewDrums() {
-  addMessage('bot', "Preview requires the Tone.js audio engine — coming in next update. For now, send it to your DAW! <em>That's where the real magic happens anyway.</em>");
+async function previewDrums() {
+  const btn = document.getElementById('drum-preview');
+  if (BF_Audio.getIsPlaying()) {
+    BF_Audio.stopAll();
+    if (btn) btn.textContent = '▶ Preview';
+    document.querySelectorAll('.seq-step').forEach(c => c.classList.remove('playhead'));
+    return;
+  }
+  if (btn) btn.textContent = '⏹ Stop';
+
+  // Convert flat pattern object to arrays per row
+  const rows = ['kick','snare','chh','ohh','perc'];
+  const pattern = {};
+  rows.forEach(r => {
+    pattern[r] = Array.from({length:16}, (_,i) => !!state.drums.pattern[`${r}-${i}`]);
+  });
+
+  await BF_Audio.playDrumPattern(
+    pattern,
+    state.scene.bpm || 128,
+    2,
+    (step) => {
+      document.querySelectorAll('.seq-step').forEach(c => {
+        c.classList.toggle('playhead', parseInt(c.dataset.step) === step % 16);
+      });
+    },
+    () => {
+      if (btn) btn.textContent = '▶ Preview';
+      document.querySelectorAll('.seq-step').forEach(c => c.classList.remove('playhead'));
+    }
+  );
 }
 
-function previewBass() { previewDrums(); }
-function previewMelody() { previewDrums(); }
+async function previewBass() {
+  const btn = document.getElementById('bass-preview');
+  if (BF_Audio.getIsPlaying()) {
+    BF_Audio.stopAll();
+    if (btn) btn.textContent = '▶ Preview'; return;
+  }
+  if (!state.bass.notes.length) {
+    addMessage('bot', "Generate a bassline first — nothing to preview yet."); return;
+  }
+  if (btn) btn.textContent = '⏹ Stop';
+  await BF_Audio.playSequence(
+    state.bass.notes,
+    state.scene.bpm || 128,
+    'bass',
+    null,
+    () => { if (btn) btn.textContent = '▶ Preview'; }
+  );
+}
+
+async function previewMelody() {
+  const btn = document.getElementById('melody-preview');
+  if (BF_Audio.getIsPlaying()) {
+    BF_Audio.stopAll();
+    if (btn) btn.textContent = '▶ Preview'; return;
+  }
+  if (!state.melody.notes.length) {
+    addMessage('bot', "Generate a melody first — nothing to preview yet."); return;
+  }
+  if (btn) btn.textContent = '⏹ Stop';
+  await BF_Audio.playSequence(
+    state.melody.notes,
+    state.scene.bpm || 128,
+    'melody',
+    null,
+    () => { if (btn) btn.textContent = '▶ Preview'; }
+  );
+}
 
 // ═══════════════════════════════════════════════
 // MIDI EXPORT ENGINE

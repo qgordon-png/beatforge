@@ -1235,3 +1235,32 @@ html, body { height:100%; background:var(--bg); color:var(--text); font-family:'
   color: #666;
   white-space: nowrap;
 }
+
+/* ── AUDIO PLAYBACK ── */
+.idea-play-btn {
+  background: #1a2a1a !important;
+  border-color: #4caf50 !important;
+  color: #4caf50 !important;
+  font-weight: 700 !important;
+}
+.idea-play-btn:hover, .idea-play-btn.playing {
+  background: #4caf5022 !important;
+}
+.idea-play-btn.playing {
+  color: #ff6b6b !important;
+  border-color: #ff6b6b !important;
+}
+
+/* Drum step playhead highlight */
+.seq-step.playhead {
+  background: #c9a84c55 !important;
+  border-color: #c9a84c !important;
+  box-shadow: 0 0 6px #c9a84c66;
+}
+
+/* Preview buttons active state */
+.btn-play.playing {
+  background: #ff6b6b22;
+  border-color: #ff6b6b;
+  color: #ff6b6b;
+}
