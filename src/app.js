@@ -1573,23 +1573,7 @@ function getDrumColour(rowId) {
 
 // initDrumExportToggle is called directly inside initDragCards below
 
-// Patch drag behaviour — if split mode, intercept and save instead
-const _origDragStart = HTMLElement.prototype.addEventListener;
-// We handle this via card.dataset.exportMode check inside the dragstart handler
-// Override getMidiForLayer for drums to respect split mode
-const _origGetMidiForLayer = getMidiForLayer;
-function getMidiForLayer(layer) {
-  if (layer === 'drums') {
-    const card = document.getElementById('drag-card-drums');
-    const mode = card?.dataset.exportMode || 'combined';
-    if (mode === 'split') {
-      // For drag in split mode — export combined anyway (split doesn't make sense as a single drag)
-      // Split is save-only
-      return _origGetMidiForLayer('drums');
-    }
-  }
-  return _origGetMidiForLayer(layer);
-}
+// (drum split handled in exportArrangement)
 
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1869,8 +1853,10 @@ function buildLayerNoteEvents(layer, bars, channel, evo) {
 const LAYER_META = {
   drums:  { channel:9,  label:'Drums',  short:'DRM' },
   bass:   { channel:0,  label:'Bass',   short:'BSS' },
-  melody: { channel:1,  label:'Melody', short:'MLY' },
-  pads:   { channel:2,  label:'Pads',   short:'PAD' },
+  arp:    { channel:1,  label:'Arp',    short:'ARP' },
+  lead:   { channel:2,  label:'Lead',   short:'LED' },
+  pads:   { channel:3,  label:'Pads',   short:'PAD' },
+  fx:     { channel:4,  label:'FX',     short:'FX_' },
 };
 
 // ── Main arrangement export ──
@@ -1878,72 +1864,419 @@ async function exportArrangement() {
   const sections  = getSections(state.scene.length);
   const bpm       = state.scene.bpm;
   const key       = state.scene.key;
-  const bars      = getBarsPerSection(bpm, parseFloat(state.scene.length) || 6, sections.length);
+  const totalMins = parseFloat(state.scene.length) || 6;
+  const defaultBars = getBarsPerSection(bpm, totalMins, sections.length);
+  const ticksPerBeat = 480;
+  const ticksPerBar  = ticksPerBeat * 4;   // 4/4 time
 
-  const layers = ['drums','bass','melody','pads'].filter(l => hasLayerData(l));
-
-  if (!layers.length) {
-    addMessage('bot', "Nothing generated yet — build your patterns first, then export the arrangement. <em>I can't automate silence. Well, I could, but you wouldn't enjoy it.</em>");
+  if (!state.melody.notes?.length && !state.bass.notes?.length && !Object.keys(state.drums.pattern||{}).length) {
+    addMessage('bot', "Nothing generated yet — build your patterns first, then export. <em>I can't automate silence. Well, I could, but you wouldn't enjoy it.</em>");
     return;
   }
 
-  const files = [];  // { filename, bytes }
+  // ── Build one multi-track Format-1 MIDI per layer-track ──
+  // Tracks: Tempo map | Drums | Bass | Arp | Lead | Pads | FX
+  // Each section's notes are placed at the correct bar offset so dragging
+  // a single MIDI file into Ableton gives you the full arrangement timeline.
 
-  sections.forEach((sectionName, si) => {
-    const role = getSectionRole(sectionName);
-    const padNum = String(si+1).padStart(2,'0');
-    const safeName = sectionName.replace(/\s+/g,'_');
+  // Pre-compute section bar offsets
+  const sectionBarOffsets = [];
+  let runningBar = 0;
+  sections.forEach((name, si) => {
+    sectionBarOffsets.push(runningBar);
+    const evo = state.progression?.[si];
+    // Use the longest phrase in this section to determine how many bars it occupies
+    const melBars  = evo?.melody?.phraseLen || defaultBars;
+    const bassBars = evo?.bass?.phraseLen   || defaultBars;
+    const secBars  = Math.max(melBars, bassBars, defaultBars);
+    runningBar += secBars;
+  });
+  const totalBars = runningBar;
 
-    const sectionEvo = state.progression && state.progression[si] ? state.progression[si] : null;
+  // ── Drum split into individual instrument tracks ──
+  const DRUM_TRACKS = [
+    { id:'kick',  name:'Kick',   note:36, ch:9 },
+    { id:'snare', name:'Snare',  note:38, ch:9 },
+    { id:'chh',   name:'Hi-Hat', note:42, ch:9 },
+    { id:'ohh',   name:'Open HH',note:46, ch:9 },
+    { id:'perc',  name:'Perc',   note:50, ch:9 },
+  ];
 
-    layers.forEach(layer => {
-      // Check if this layer is active in this section
-      const arrKey = `${layer === 'drums' ? 'kick' : layer}-${si}`;
-      const isActive = state.arrangement[arrKey] !== false;
-      if (!isActive) return;
+  // Build per-track event lists (all sections merged into timeline)
+  const trackEvents = {}; // key → [{tick, data}]
 
-      const meta   = LAYER_META[layer];
-      const evo    = sectionEvo;
-      // Use progression phrase length to determine clip bar count
-      const clipBars = evo && evo[layer] ? evo[layer].phraseLen : bars;
-      const ccCurves = getCCAutomation(role, layer);
-      const noteEvents = buildLayerNoteEvents(layer, clipBars, meta.channel, evo);
+  const addEv = (trackId, tick, data) => {
+    if (!trackEvents[trackId]) trackEvents[trackId] = [];
+    trackEvents[trackId].push({ tick, data });
+  };
 
-      const filename = `${padNum}_${safeName}__${meta.short}.mid`;
-      const trackName = `${sectionName} ${meta.label}`;
-      const bytes = buildArrangementClip(noteEvents, ccCurves, meta.channel, bpm, clipBars, trackName);
+  sections.forEach((secName, si) => {
+    const role   = getSectionRole(secName);
+    const evo    = state.progression?.[si] || null;
+    const offsetTick = sectionBarOffsets[si] * ticksPerBar;
+    const secBars = evo?.melody?.phraseLen
+                  ? Math.max(evo.melody.phraseLen, evo?.bass?.phraseLen || defaultBars, defaultBars)
+                  : defaultBars;
+    const arrActive = (layId) => state.arrangement[`${layId}-${si}`] !== false;
+    const ticksPerStep = ticksPerBeat / 4;
 
-      files.push({ filename, bytes, section: sectionName, layer, role, clipBars });
-    });
+    // ── DRUMS ──
+    if (arrActive('kick')) {
+      const activeEls = evo?.drums?.elements || DRUM_TRACKS.map(d=>d.id);
+      const density   = evo?.drums?.density  || 5;
+      const vel = Math.min(127, Math.round(70 + density * 5));
+      DRUM_TRACKS.forEach(dt => {
+        if (!activeEls.includes(dt.id)) return;
+        for (let bar = 0; bar < secBars; bar++) {
+          for (let step = 0; step < 16; step++) {
+            if (state.drums.pattern[`${dt.id}-${step}`]) {
+              const t   = offsetTick + (bar * 16 + step) * ticksPerStep;
+              const dur = Math.round(ticksPerStep * 0.9);
+              addEv(`drum_${dt.id}`, t,       [0x99, dt.note, vel]);
+              addEv(`drum_${dt.id}`, t + dur, [0x89, dt.note, 0]);
+            }
+          }
+        }
+      });
+    }
+
+    // ── BASS ──
+    if (arrActive('bass') && state.bass.notes?.length) {
+      const bEvo     = evo?.bass;
+      const phraseLen = bEvo?.phraseLen || defaultBars;
+      const intensity = bEvo?.intensity || 100;
+      const bStyle    = bEvo?.style || 'progression';
+      const scale     = getScale(key);
+      let notes = state.bass.notes;
+      if (bStyle === 'root') {
+        notes = notes.filter(n => n.note % 12 === scale[0] % 12);
+        if (!notes.length) notes = state.bass.notes.slice(0,1);
+      } else if (bStyle === 'walk') {
+        const filtered = notes.filter(n => {
+          const pc = n.note % 12;
+          return pc === scale[0] % 12 || pc === scale[4] % 12;
+        });
+        if (filtered.length) notes = filtered;
+      }
+      const phraseTicks = phraseLen * ticksPerBar;
+      const totalSecTicks = secBars * ticksPerBar;
+      let off = 0;
+      while (off < totalSecTicks) {
+        notes.forEach(n => {
+          const nt  = n.time !== undefined ? n.time * ticksPerStep : (n.tick||0);
+          const nd  = n.duration !== undefined ? n.duration * ticksPerStep : ticksPerStep;
+          const t   = offsetTick + off + nt;
+          const vel = Math.min(127, Math.round((n.velocity||100) * (intensity/100)));
+          addEv('bass', t,      [0x90, n.note, vel]);
+          addEv('bass', t + nd, [0x80, n.note, 0]);
+        });
+        off += phraseTicks;
+      }
+    }
+
+    // ── MELODY → ARP track + LEAD track ──
+    if (arrActive('lead') && state.melody.notes?.length) {
+      const mEvo      = evo?.melody;
+      const phraseLen = mEvo?.phraseLen  || defaultBars;
+      const intensity = mEvo?.intensity  || 100;
+      const density   = mEvo?.noteDensity || 7;
+      const phraseTicks = phraseLen * ticksPerBar;
+      const totalSecTicks = secBars * ticksPerBar;
+
+      // Split melody notes: shorter duration = arp, longer = lead
+      const allNotes = state.melody.notes;
+      const avgDur   = allNotes.reduce((s,n) => s + (n.duration||2), 0) / allNotes.length;
+      const arpNotes  = allNotes.filter(n => (n.duration||2) <= avgDur);
+      const leadNotes = allNotes.filter(n => (n.duration||2) >  avgDur);
+      // Fallback: if all same duration, put all in arp and duplicate to lead
+      const useArp  = arpNotes.length  ? arpNotes  : allNotes;
+      const useLead = leadNotes.length ? leadNotes : allNotes;
+
+      // Filter by density
+      const filterByDensity = (notes) => {
+        if (density >= 7) return notes;
+        const pitches = [...new Set(notes.map(n => n.note))].slice(0, density);
+        return notes.filter(n => pitches.includes(n.note));
+      };
+
+      const writeNotes = (trackId, ch, notes) => {
+        if (!notes.length) return;
+        let off = 0;
+        while (off < totalSecTicks) {
+          notes.forEach(n => {
+            const nt  = n.time !== undefined ? n.time * ticksPerStep : (n.tick||0);
+            const nd  = n.duration !== undefined ? n.duration * ticksPerStep : ticksPerStep;
+            const t   = offsetTick + off + nt;
+            const vel = Math.min(127, Math.round((n.velocity||100) * (intensity/100)));
+            addEv(trackId, t,      [0x90|ch, n.note, vel]);
+            addEv(trackId, t + nd, [0x80|ch, n.note, 0]);
+          });
+          off += phraseTicks;
+        }
+      };
+
+      writeNotes('arp',  1, filterByDensity(useArp));
+      writeNotes('lead', 2, filterByDensity(useLead));
+    }
+
+    // ── PADS ──
+    if (arrActive('pad') && state.pads.notes?.length) {
+      const phraseLen = defaultBars;
+      const phraseTicks = phraseLen * ticksPerBar;
+      const totalSecTicks = secBars * ticksPerBar;
+      let off = 0;
+      while (off < totalSecTicks) {
+        state.pads.notes.forEach(n => {
+          const nt  = n.time !== undefined ? n.time * ticksPerStep : (n.tick||0);
+          const nd  = n.duration !== undefined ? n.duration * ticksPerStep : ticksPerStep;
+          const t   = offsetTick + off + nt;
+          addEv('pads', t,      [0x93, n.note, n.velocity||60]);
+          addEv('pads', t + nd, [0x83, n.note, 0]);
+        });
+        off += phraseTicks;
+      }
+    }
+
+    // ── FX ──
+    if (arrActive('fx')) {
+      // FX = CC-only track: reverb throw on builds/breakdowns, filter sweep on drops
+      const ccCurves = getCCAutomation(role, 'fx');
+      const totalSecTicks = secBars * ticksPerBar;
+      const ccEvts = buildCCEvents(ccCurves, totalSecTicks, 4);
+      ccEvts.forEach(e => addEv('fx', offsetTick + e.tick, e.data));
+    }
   });
 
-  if (!files.length) {
-    addMessage('bot', "All layers are muted in the arrangement. Flip some cells on and try again.");
-    return;
-  }
+  // ── Assemble Format-1 MIDI (multiple tracks) ──
+  const endTick = totalBars * ticksPerBar + ticksPerBeat;
+  const tempo   = Math.round(60000000 / bpm);
 
-  // Export
+  // Track 0: tempo map
+  const tempoTrack = buildRawTrack('Tempo Map', [
+    { tick:0, data:[0xFF,0x51,0x03,(tempo>>16)&0xFF,(tempo>>8)&0xFF,tempo&0xFF] },
+    { tick:0, data:[0xFF,0x58,0x04,0x04,0x02,0x18,0x08] }, // 4/4
+    { tick: endTick, data:[0xFF,0x2F,0x00] }
+  ]);
+
+  const TRACK_ORDER = [
+    { id:'drum_kick',  name:'Kick',    ch:9 },
+    { id:'drum_snare', name:'Snare',   ch:9 },
+    { id:'drum_chh',   name:'Hi-Hat',  ch:9 },
+    { id:'drum_ohh',   name:'Open HH', ch:9 },
+    { id:'drum_perc',  name:'Perc',    ch:9 },
+    { id:'bass',       name:'Bass',    ch:0 },
+    { id:'arp',        name:'Arp',     ch:1 },
+    { id:'lead',       name:'Lead',    ch:2 },
+    { id:'pads',       name:'Pads',    ch:3 },
+    { id:'fx',         name:'FX',      ch:4 },
+  ];
+
+  const tracks = [tempoTrack];
+  TRACK_ORDER.forEach(t => {
+    const evts = trackEvents[t.id];
+    if (!evts || !evts.length) return;
+    evts.push({ tick: endTick, data:[0xFF,0x2F,0x00] });
+    tracks.push(buildRawTrack(t.name, evts));
+  });
+
+  // MIDI header: format 1, N tracks
+  const numTracks = tracks.length;
+  const midiHeader = [
+    0x4D,0x54,0x68,0x64,
+    0x00,0x00,0x00,0x06,
+    0x00,0x01,                              // format 1
+    (numTracks>>8)&0xFF, numTracks&0xFF,
+    (ticksPerBeat>>8)&0xFF, ticksPerBeat&0xFF
+  ];
+  const allBytes = new Uint8Array([
+    ...midiHeader,
+    ...tracks.flatMap(t => Array.from(t))
+  ]);
+
+  // ── Also build a CC cheat sheet txt ──
+  const cheatLines = buildCheatSheet(sections, bpm, key);
+  const cheatBytes = new TextEncoder().encode(cheatLines);
+
+  // ── ZIP both into one download ──
+  const safeName = `BeatForge_${key.replace('#','s')}_${bpm}bpm`;
+  const zip = buildZip([
+    { name: `${safeName}_Arrangement.mid`, bytes: allBytes },
+    { name: `${safeName}_CC_Map.txt`,      bytes: cheatBytes },
+  ]);
+
+  const zipFilename = `${safeName}.zip`;
   if (isElectron()) {
-    // Save each file — native dialog per section folder grouping
-    const { dialog } = window.beatforge;
-    for (const f of files) {
-      await window.beatforge.midi.save(f.filename, Array.from(f.bytes));
-    }
+    await window.beatforge.midi.save(zipFilename, Array.from(zip));
   } else {
-    files.forEach((f, i) => {
-      setTimeout(() => downloadMidi(f.bytes, f.filename), i * 300);
-    });
+    downloadBytes(zip, zipFilename, 'application/zip');
   }
 
-  // Also generate the cheat sheet
-  exportCCCheatSheet(sections, layers, bpm, key);
-
-  const sectionCount = sections.length;
-  const fileCount    = files.length;
-  addMessage('bot', `Arrangement exported — <strong>${fileCount} clips</strong> across ${sectionCount} sections. CC automation is baked into every clip: filter sweeps on buildups, reverb throws before drops, closed filter on breakdowns. Drop them into Ableton, open a clip → MIDI envelope → map CC74 to your filter cutoff on Serum/Sylenth. <em>You're welcome.</em>`);
+  addMessage('bot', `<strong>ZIP exported</strong> — one multi-track MIDI + CC map. Drag <em>${safeName}_Arrangement.mid</em> into Ableton session view. It'll land ${TRACK_ORDER.filter(t=>trackEvents[t.id]?.length).length} tracks wide with every section already in the right position on the timeline. Kick, snare, hats all split. Arp and lead are separate tracks. <em>You're welcome.</em>`);
 }
 
-// ── CC Cheat Sheet ──
+// ── Build a raw MIDI track chunk from events array ──
+function buildRawTrack(name, events) {
+  events.sort((a,b) => a.tick - b.tick);
+  const nameBytes = Array.from(new TextEncoder().encode(name));
+  let allEvts = [
+    { tick:0, data:[0xFF,0x03,nameBytes.length,...nameBytes] },
+    ...events
+  ];
+  allEvts.sort((a,b) => a.tick - b.tick);
+  let bytes = [];
+  let prev  = 0;
+  allEvts.forEach(e => {
+    const delta = e.tick - prev;
+    prev = e.tick;
+    bytes.push(...writeVarLen(delta), ...e.data);
+  });
+  const len = bytes.length;
+  return new Uint8Array([
+    0x4D,0x54,0x72,0x6B,
+    (len>>24)&0xFF,(len>>16)&0xFF,(len>>8)&0xFF,len&0xFF,
+    ...bytes
+  ]);
+}
+
+// ── Minimal ZIP builder (stored, no compression) ──
+function buildZip(files) {
+  // files: [{name:string, bytes:Uint8Array}]
+  const enc = new TextEncoder();
+  let localHeaders = [];
+  let centralDir   = [];
+  let offset = 0;
+
+  files.forEach(f => {
+    const nameBytes = enc.encode(f.name);
+    const crc = crc32(f.bytes);
+    const size = f.bytes.length;
+    const dosDate = 0x5369; // arbitrary fixed date
+    const dosTime = 0x0000;
+
+    // Local file header
+    const lh = new Uint8Array([
+      0x50,0x4B,0x03,0x04,  // signature
+      0x14,0x00,            // version needed: 2.0
+      0x00,0x00,            // general flags
+      0x00,0x00,            // compression: stored
+      dosTime & 0xFF, (dosTime>>8)&0xFF,
+      dosDate & 0xFF, (dosDate>>8)&0xFF,
+      crc&0xFF,(crc>>8)&0xFF,(crc>>16)&0xFF,(crc>>24)&0xFF,
+      size&0xFF,(size>>8)&0xFF,(size>>16)&0xFF,(size>>24)&0xFF,
+      size&0xFF,(size>>8)&0xFF,(size>>16)&0xFF,(size>>24)&0xFF,
+      nameBytes.length&0xFF,(nameBytes.length>>8)&0xFF,
+      0x00,0x00,            // extra field length
+      ...nameBytes,
+      ...f.bytes
+    ]);
+    localHeaders.push(lh);
+
+    // Central directory entry
+    const cd = new Uint8Array([
+      0x50,0x4B,0x01,0x02,  // signature
+      0x14,0x00,            // version made by
+      0x14,0x00,            // version needed
+      0x00,0x00,            // flags
+      0x00,0x00,            // compression
+      dosTime & 0xFF, (dosTime>>8)&0xFF,
+      dosDate & 0xFF, (dosDate>>8)&0xFF,
+      crc&0xFF,(crc>>8)&0xFF,(crc>>16)&0xFF,(crc>>24)&0xFF,
+      size&0xFF,(size>>8)&0xFF,(size>>16)&0xFF,(size>>24)&0xFF,
+      size&0xFF,(size>>8)&0xFF,(size>>16)&0xFF,(size>>24)&0xFF,
+      nameBytes.length&0xFF,(nameBytes.length>>8)&0xFF,
+      0x00,0x00,            // extra
+      0x00,0x00,            // comment
+      0x00,0x00,            // disk start
+      0x00,0x00,            // int attr
+      0x00,0x00,0x00,0x00,  // ext attr
+      offset&0xFF,(offset>>8)&0xFF,(offset>>16)&0xFF,(offset>>24)&0xFF,
+      ...nameBytes
+    ]);
+    centralDir.push(cd);
+    offset += lh.length;
+  });
+
+  const cdOffset = offset;
+  const cdBytes  = new Uint8Array(centralDir.flatMap(a => Array.from(a)));
+  const eocd = new Uint8Array([
+    0x50,0x4B,0x05,0x06,  // end of central dir signature
+    0x00,0x00,0x00,0x00,  // disk number / cd start disk
+    files.length&0xFF,(files.length>>8)&0xFF,
+    files.length&0xFF,(files.length>>8)&0xFF,
+    cdBytes.length&0xFF,(cdBytes.length>>8)&0xFF,(cdBytes.length>>16)&0xFF,(cdBytes.length>>24)&0xFF,
+    cdOffset&0xFF,(cdOffset>>8)&0xFF,(cdOffset>>16)&0xFF,(cdOffset>>24)&0xFF,
+    0x00,0x00             // comment length
+  ]);
+
+  const total = localHeaders.flatMap(a=>Array.from(a));
+  return new Uint8Array([...total, ...Array.from(cdBytes), ...Array.from(eocd)]);
+}
+
+// ── CRC32 for ZIP ──
+function crc32(bytes) {
+  let crc = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) {
+    crc ^= bytes[i];
+    for (let j = 0; j < 8; j++) {
+      crc = (crc & 1) ? (crc >>> 1) ^ 0xEDB88320 : crc >>> 1;
+    }
+  }
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+// ── Generic byte downloader ──
+function downloadBytes(bytes, filename, mime) {
+  const blob = new Blob([bytes], { type: mime });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+// ── Build cheat sheet string (returns string) ──
+function buildCheatSheet(sections, bpm, key) {
+  const lines = [
+    `BeatForge Arrangement Export`,
+    `Track: ${key} · ${bpm} BPM · ${sections.length} sections`,
+    `Generated: ${new Date().toLocaleString()}`,
+    ``,
+    `── CC AUTOMATION MAP ──`,
+    `CC 74  →  Filter Cutoff    (Serum: Fil Cutoff | Sylenth: CutOff)`,
+    `CC 71  →  Filter Resonance (Serum: Fil Res    | Sylenth: Resonance)`,
+    `CC 91  →  Reverb Send      (Ableton Reverb: Dry/Wet)`,
+    `CC 92  →  Delay Send       (Ableton Delay: Dry/Wet)`,
+    `CC 11  →  Expression/Volume riding`,
+    ``,
+    `── HOW TO MAP IN ABLETON ──`,
+    `1. Drop BeatForge_Arrangement.mid into Session View`,
+    `2. Ableton auto-creates one track per MIDI channel`,
+    `3. On each track assign your instrument (Serum, Sylenth, Drum Rack etc)`,
+    `4. Open any clip → Envelopes → select CC74 lane → automation is already drawn`,
+    `5. Right-click synth param → MIDI Map → move CC74 slider`,
+    ``,
+    `── TRACK LAYOUT ──`,
+    `Ch 10  Kick / Snare / Hi-Hat / Open HH / Perc  (Ableton Drum Rack)`,
+    `Ch 1   Bass`,
+    `Ch 2   Arp (melodic, shorter phrases)`,
+    `Ch 3   Lead (melodic, longer phrases)`,
+    `Ch 4   Pads`,
+    `Ch 5   FX (CC automation only — reverb/filter throws)`,
+    ``,
+    `── SECTION PROGRESSION ──`,
+    ...sections.map((s,i) => {
+      const evo = (typeof state !== 'undefined' && state.progression?.[i]) || {};
+      const mel = evo.melody ? `Melody: ${evo.melody.label || ''} (${evo.melody.phraseLen||'?'}bar)` : '';
+      const bas = evo.bass   ? `Bass: ${evo.bass.label   || ''} (${evo.bass.style||''})` : '';
+      const drm = evo.drums  ? `Drums: ${evo.drums.label || ''}` : '';
+      return `${String(i+1).padStart(2,'0')} ${s}\n   ${mel}\n   ${bas}\n   ${drm}`;
+    }),
+    ``,
+    `Generated by BeatForge — beatforge.app`,
+  ];
+  return lines.join('\n');
+}
+
+// ── CC Cheat Sheet (legacy, kept for compatibility) ──
 function exportCCCheatSheet(sections, layers, bpm, key) {
   const lines = [
     `BeatForge Arrangement Export`,
