@@ -560,20 +560,24 @@ function drawIdeaRoll() {
 }
 
 function attachIdeaRollEvents() {
-  const canvas = document.getElementById('idea-roll-canvas');
-  if (!canvas || canvas._eventsAttached) return;
-  canvas._eventsAttached = true;
+  // Always replace canvas with a fresh clone to strip stale listeners
+  const oldCanvas = document.getElementById('idea-roll-canvas');
+  if (!oldCanvas) return;
+  const canvas = oldCanvas.cloneNode(true);
+  oldCanvas.parentNode.replaceChild(canvas, oldCanvas);
 
   const getPos = (e) => {
     const rect = canvas.getBoundingClientRect();
     const totalSteps = ideaRoll.bars * 16;
-    const stepW = canvas.width / totalSteps;
-    const rowH  = canvas.height / ideaRoll.rows;
-    const x     = (e.clientX - rect.left) * (canvas.width / rect.width);
-    const y     = (e.clientY - rect.top)  * (canvas.height / rect.height);
+    const stepW = canvas.width / totalSteps || 28;
+    const rowH  = canvas.height / ideaRoll.rows || 9;
+    const scaleX = rect.width  > 0 ? canvas.width  / rect.width  : 1;
+    const scaleY = rect.height > 0 ? canvas.height / rect.height : 1;
+    const x     = (e.clientX - rect.left) * scaleX;
+    const y     = (e.clientY - rect.top)  * scaleY;
     return {
-      step: Math.floor(x / stepW),
-      row:  Math.floor(y / rowH),
+      step: Math.max(0, Math.floor(x / stepW)),
+      row:  Math.max(0, Math.min(ideaRoll.rows - 1, Math.floor(y / rowH))),
       stepW, rowH
     };
   };
@@ -661,7 +665,7 @@ function playIdeaRoll() {
   }));
 
   if (!notes.length) {
-    document.getElementById('idea-roll-status').textContent = 'Draw some notes first, then hit Play.';
+    const _irs = document.getElementById('idea-roll-status'); if(_irs) _irs.textContent = 'Draw some notes first, then hit Play.';
     return;
   }
 
@@ -672,14 +676,14 @@ function playIdeaRoll() {
   }
 
   updateIdeaTransport(true);
-  document.getElementById('idea-roll-status').textContent = '▶ Playing…';
+  const _irs = document.getElementById('idea-roll-status'); if(_irs) _irs.textContent = '▶ Playing…';
 
   BF_Audio.playSequence(notes, bpm, role,
     (step) => highlightRollStep(step),
     () => {
       updateIdeaTransport(false);
       clearRollHighlight();
-      document.getElementById('idea-roll-status').textContent = 'Click to place notes · Drag to resize · Right-click to delete';
+      const _irs = document.getElementById('idea-roll-status'); if(_irs) _irs.textContent = 'Click to place notes · Drag to resize · Right-click to delete';
     }
   ).catch(err => console.warn('Audio play error:', err));
 }
@@ -787,7 +791,7 @@ function suggestIdeaPhrase() {
 
   drawIdeaRoll();
   commitIdeaRollToState();
-  document.getElementById('idea-roll-status').textContent = `Suggested ${ideaRoll.notes.length} notes — tweak freely then hit Build.`;
+  const _irs = document.getElementById('idea-roll-status'); if(_irs) _irs.textContent = `Suggested ${ideaRoll.notes.length} notes — tweak freely then hit Build.`;
 }
 
 // ── Quantise all notes to current snap ──

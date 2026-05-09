@@ -1,6 +1,6 @@
 {
   "name": "beatforge",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "AI Co-Producer \u2014 Layer by layer music production assistant",
   "main": "main.js",
   "scripts": {
@@ -40,7 +40,9 @@
     "publish": {
       "provider": "github",
       "owner": "qgordon-png",
-      "repo": "beatforge"
-    }
+      "repo": "beatforge",
+      "releaseType": "release"
+    },
+    "artifactName": "${productName}-Setup-${version}.${ext}"
   }
 }
