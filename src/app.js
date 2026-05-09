@@ -10,7 +10,9 @@ const state = {
     bpm: 128,
     mood: 'driving',
     length: '6',
-    reference: null
+    energyArc: 'club-banger',
+    atmosphere: 'euphoric',
+    density: 'balanced',
   },
   arrangement: {},
   progression: {},    // per-section evolution: { 'si': { melody:{}, bass:{}, drums:{} } }
@@ -56,6 +58,121 @@ function getBarsPerSection(bpm, totalMins, numSections) {
   return Math.max(4, Math.round(totalBars / numSections));
 }
 
+// ─── INTENT PROFILE ENGINE ──────────────────────────────────
+// Maps (energyArc + atmosphere + density) → mathematical blueprint
+// All downstream generation reads from this object
+
+function computeIntentBlueprint() {
+  const arc  = state.scene.energyArc  || 'club-banger';
+  const atmo = state.scene.atmosphere || 'euphoric';
+  const dens = state.scene.density    || 'balanced';
+
+  // ── Base parameters per Energy Arc ──
+  const arcParams = {
+    'club-banger':    { bpmMin:128, bpmMax:132, swing:10, introLayers:2, dropLayers:6, breakdownLayers:1, melodyArc:'tight',    bassDrive:'rolling',  tension:'mid',  phraseGrowth:[2,4,4,8],   drumBuild:'steady'    },
+    'festival-epic':  { bpmMin:126, bpmMax:130, swing:5,  introLayers:1, dropLayers:7, breakdownLayers:2, melodyArc:'bloom',     bassDrive:'walk',     tension:'high', phraseGrowth:[2,4,8,16],  drumBuild:'dramatic'  },
+    'late-night-deep':{ bpmMin:120, bpmMax:126, swing:20, introLayers:3, dropLayers:5, breakdownLayers:3, melodyArc:'slow-burn', bassDrive:'minimal',  tension:'low',  phraseGrowth:[4,4,8,8],   drumBuild:'subtle'    },
+    'peak-time':      { bpmMin:132, bpmMax:138, swing:8,  introLayers:1, dropLayers:8, breakdownLayers:1, melodyArc:'stab',      bassDrive:'driving',  tension:'max',  phraseGrowth:[2,2,4,8],   drumBuild:'relentless'},
+    'journey':        { bpmMin:122, bpmMax:128, swing:15, introLayers:2, dropLayers:6, breakdownLayers:3, melodyArc:'evolve',    bassDrive:'progress', tension:'arc',  phraseGrowth:[2,4,8,16],  drumBuild:'story'     },
+  };
+
+  // ── Scale degree tension maps per atmosphere ──
+  // Which scale degrees are introduced in each phase: intro → build → drop → breakdown → drop2
+  const atmosphereTension = {
+    'dark-industrial': { introDegs:[0,4],       buildDegs:[0,2,4,6],     dropDegs:[0,1,2,3,4,5,6], scaleMod:'phrygian',  scaleHint:'Phrygian / Locrian — dissonance, avoid the 2nd early' },
+    'euphoric':        { introDegs:[0,2,4],      buildDegs:[0,2,3,4,5],   dropDegs:[0,1,2,3,4,5,6], scaleMod:'natural',   scaleHint:'Natural minor with 6th — emotional uplift on the 6th degree' },
+    'hypnotic':        { introDegs:[0,4],        buildDegs:[0,2,4],       dropDegs:[0,2,4,5,6],     scaleMod:'dorian',    scaleHint:'Dorian — raised 6th creates forward motion without resolution' },
+    'melancholic':     { introDegs:[0,3],        buildDegs:[0,2,3,5],     dropDegs:[0,2,3,4,5,6],   scaleMod:'aeolian',   scaleHint:'Aeolian — full natural minor, lean on the b7 for longing' },
+    'tribal':          { introDegs:[0,5],        buildDegs:[0,2,4,5],     dropDegs:[0,2,4,5,6],     scaleMod:'pentatonic',scaleHint:'Minor pentatonic — strip to 5 notes, rhythm IS the melody' },
+  };
+
+  // ── Density multipliers ──
+  const densityMult = { minimal:0.5, balanced:1.0, dense:1.4 };
+  const mult = densityMult[dens] || 1.0;
+
+  const ap = arcParams[arc]   || arcParams['club-banger'];
+  const at = atmosphereTension[atmo] || atmosphereTension['euphoric'];
+
+  // ── Drum density per section type ──
+  const drumDensity = {
+    intro:     Math.round(2  * mult),
+    build:     Math.round(6  * mult),
+    drop:      Math.round(8  * mult),
+    breakdown: Math.round(2  * mult),
+    outro:     Math.round(3  * mult),
+  };
+
+  // ── Melody note density (scale degrees active) per phase ──
+  const melodyDensity = {
+    intro:     at.introDegs.length,
+    build:     at.buildDegs.length,
+    drop:      Math.round(at.dropDegs.length * mult),
+    breakdown: Math.max(2, at.introDegs.length - 1),
+    outro:     at.introDegs.length,
+  };
+
+  // ── Velocity intensity per section type ──
+  const velocityMap = {
+    intro:     Math.round(45 * mult),
+    build:     Math.round(65 * mult),
+    drop:      Math.min(127, Math.round(95 * mult)),
+    breakdown: Math.round(40 * mult),
+    outro:     Math.round(35 * mult),
+  };
+
+  // ── Bass style per section ──
+  const bassStyleMap = {
+    intro:     'root',
+    build:     ap.bassDrive === 'minimal' ? 'root' : 'walk',
+    drop:      ap.bassDrive === 'driving' || ap.bassDrive === 'progress' ? 'progression' : 'walk',
+    breakdown: 'root',
+    outro:     'root',
+  };
+
+  // ── Swing by arc + atmosphere ──
+  let swing = ap.swing;
+  if (atmo === 'hypnotic' || atmo === 'tribal') swing += 8;
+  if (arc === 'late-night-deep') swing += 5;
+  swing = Math.min(35, swing);
+
+  // BPM recommendation (don't force-change, just advise)
+  const bpmAdvice = `${ap.bpmMin}–${ap.bpmMax}`;
+
+  const blueprint = {
+    arc, atmo, dens,
+    bpmAdvice,
+    swing,
+    drumDensity,
+    melodyDensity,
+    velocityMap,
+    bassStyleMap,
+    phraseGrowth: ap.phraseGrowth,
+    scaleHint:    at.scaleHint,
+    introLayers:  Math.round(ap.introLayers * mult),
+    dropLayers:   Math.round(ap.dropLayers  * mult),
+    drumBuild:    ap.drumBuild,
+    melodyArc:    ap.melodyArc,
+    tension:      ap.tension,
+    scaleDegrees: at,
+  };
+
+  state.intent = blueprint;
+  return blueprint;
+}
+
+// Update the intent summary UI panel
+function updateIntentSummary() {
+  const bp = computeIntentBlueprint();
+  const set = (id, val) => { const el = document.getElementById(id); if(el) el.textContent = val; };
+  set('is-bpm',     `${bp.bpmAdvice} BPM recommended`);
+  set('is-swing',   `${bp.swing}% groove offset`);
+  set('is-intro',   `${bp.introLayers} layer${bp.introLayers>1?'s':''} — sparse entry`);
+  set('is-drop',    `${bp.dropLayers} layer${bp.dropLayers>1?'s':''} at peak`);
+  set('is-melody',  `${bp.melodyArc} — phrases: ${bp.phraseGrowth.join('→')} bars`);
+  set('is-bass',    `${bp.bassStyleMap.drop} at drop / ${bp.bassStyleMap.intro} intro`);
+  set('is-tension', bp.scaleHint);
+}
+
 // ─── PROGRESSION BLUEPRINT ENGINE ───────────────────────────
 // Classify a section name into a role type
 function classifySection(name) {
@@ -90,30 +207,43 @@ function buildProgressionBlueprint(sections) {
 
 // Per-section evolution state
 function buildSectionEvolution(role, dropIdx, si, totalSections) {
+  const intent = state.intent || {};
   // Melody phrase lengths: 2 bars intro motif → 4 bars first drop → 8 bars evolved drops
   // Bass: root only intro → walking first drop → full progression later
   // Drums: stripped intro/breakdown → full drop → perc layers added in later drops
 
+  // Pull intent-computed values
+  const iDrumDensity  = intent.drumDensity  || {};
+  const iMelDensity   = intent.melodyDensity || {};
+  const iVelocity     = intent.velocityMap   || {};
+  const iBassStyle    = intent.bassStyleMap  || {};
+  const iPhraseGrowth = intent.phraseGrowth  || [2,4,8,16];
+  const iSwing        = intent.swing         || 10;
+
+  // Phrase length from growth array: intro→build→drop→drop2+
+  const phaseIdx = role === 'intro' ? 0 : role === 'build' ? 1 : role === 'drop' ? Math.min(2 + (dropIdx-1), iPhraseGrowth.length-1) : role === 'breakdown' ? 2 : 1;
+  const phraseLen = iPhraseGrowth[phaseIdx] || 4;
+
   const evo = {
     melody: {
-      phraseLen:   2,    // bars the melody phrase spans before looping
-      noteDensity: 2,    // how many scale degrees are active (1-7)
-      octaveSpread:0,    // 0 = root octave only, 1 = +1 octave added
-      intensity:   40,   // velocity base (0-127)
-      motifNotes:  null, // generated later from base melody
+      phraseLen:   phraseLen,
+      noteDensity: iMelDensity[role] || 3,
+      octaveSpread: (role === 'drop' && dropIdx > 1) ? 1 : 0,
+      intensity:   iVelocity[role]   || 70,
+      motifNotes:  null,
       label:       '',
     },
     bass: {
-      phraseLen:   2,
-      style:       'root',  // root | walk | progression
-      octaveDepth: 0,        // 0 = normal, 1 = sub octave added
-      intensity:   80,
+      phraseLen:   phraseLen,
+      style:       iBassStyle[role]  || 'root',
+      octaveDepth: (role === 'drop') ? 1 : 0,
+      intensity:   Math.min(127, (iVelocity[role] || 70) + 10),
       label:       '',
     },
     drums: {
-      elements: ['kick'],   // which drum elements are active
-      density:  3,          // perc/hat density multiplier 1-10
-      swing:    0,          // extra swing % for this section
+      elements: ['kick'],
+      density:  iDrumDensity[role]  || 3,
+      swing:    role === 'drop' ? iSwing : role === 'build' ? Math.round(iSwing * 0.6) : 0,
       label:    '',
     }
   };
@@ -235,6 +365,7 @@ const DRUM_ROWS = [
 // ─── INIT ───
 document.addEventListener('DOMContentLoaded', () => {
   initChips();
+  updateIntentSummary();
   initTrackLengthInput();
   initBPM();
   initStepNav();
@@ -297,18 +428,24 @@ function initChips() {
 
 function updateState(field, value) {
   switch(field) {
-    case 'genre': state.scene.genre = value; break;
-    case 'key': state.scene.key = value; break;
-    case 'mood': state.scene.mood = value; break;
-    case 'length': state.scene.length = value; break;
-    case 'reference': state.scene.reference = value; break;
-    case 'drum-style': state.drums.style = value; break;
-    case 'bass-style': state.bass.style = value; break;
-    case 'melody-style': state.melody.style = value; break;
-    case 'pad-style': state.pads.style = value; break;
-    case 'fx-elements': state.pads.fx = value; break;
+    case 'genre':       state.scene.genre       = value; break;
+    case 'key':         state.scene.key         = value; break;
+    case 'mood':        state.scene.mood        = value; break;
+    case 'length':      state.scene.length      = value; break;
+    case 'energyArc':   state.scene.energyArc   = value; break;
+    case 'atmosphere':  state.scene.atmosphere  = value; break;
+    case 'density':     state.scene.density     = value; break;
+    case 'drum-style':  state.drums.style       = value; break;
+    case 'bass-style':  state.bass.style        = value; break;
+    case 'melody-style':state.melody.style      = value; break;
+    case 'pad-style':   state.pads.style        = value; break;
+    case 'fx-elements': state.pads.fx           = value; break;
   }
   updateTransportBar();
+  // Recalc intent summary whenever a scene field changes
+  if (['genre','mood','energyArc','atmosphere','density'].includes(field)) {
+    updateIntentSummary();
+  }
 }
 
 // ─── BPM ───
@@ -394,10 +531,9 @@ function buildArrangementGrid() {
   const totalMins = parseFloat(state.scene.length) || 6;
   const bars = getBarsPerSection(bpm, totalMins, sections.length);
 
-  // Build blueprint if not already done
-  if (!state.progression || Object.keys(state.progression).length === 0) {
-    state.progression = buildProgressionBlueprint(sections);
-  }
+  // Always rebuild blueprint from intent
+  computeIntentBlueprint();
+  state.progression = buildProgressionBlueprint(sections);
 
   // Build old-style arrangement defaults too (for MIDI export compatibility)
   LAYERS.forEach(layer => {
@@ -715,13 +851,25 @@ async function aiSuggestArrangement() {
   
   setTimeout(() => {
     const dropCount = sections.filter(s => classifySection(s) === 'drop').length;
-    addMessage('bot', `Done. <strong>${sections.length} sections mapped</strong> — full progression blueprint generated. Your melody starts as a 2-bar seed and evolves through ${dropCount} drops into a complete phrase. Bass walks the chord, drums build in layers. Every section already knows what it's playing and how long. <em>Drop in your instruments. You're welcome.</em>`);
+    const bp = state.intent || {};
+    const arcLabel = (state.scene.energyArc||'').replace(/-/g,' ');
+    const atmoLabel = (state.scene.atmosphere||'').replace(/-/g,' ');
+    addMessage('bot', `Done. <strong>${sections.length} sections mapped</strong> — <em>${arcLabel} · ${atmoLabel}</em> blueprint applied. Phrases grow ${(bp.phraseGrowth||[2,4,8]).join('→')} bars. Swing locked at ${bp.swing||10}%. ${dropCount} drops, each one more evolved than the last. Every section knows exactly what it's doing. <em>Drop in your instruments. You're welcome.</em>`);
   }, 800);
 }
 
 async function aiGenerateDrums() {
-  addMessage('bot', "Cooking up a drum pattern... <em>This is going to be magnificent.</em>");
-  
+  // Pull intent blueprint
+  const bp = computeIntentBlueprint();
+  const drumBuild = bp.drumBuild || 'steady';
+  addMessage('bot', `Cooking up a <strong>${drumBuild}</strong> drum pattern... <em>This is going to be magnificent.</em>`);
+
+  // Apply intent swing to drum state
+  state.drums.swing = bp.swing;
+  const swingEl = document.getElementById('drum-swing');
+  const swingVal = document.querySelector('#drum-swing + .range-val') || document.querySelector('.range-val');
+  if (swingEl) { swingEl.value = bp.swing; }
+
   // Generate pattern based on style
   const seq = document.getElementById('drum-sequencer');
   

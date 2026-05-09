@@ -143,16 +143,54 @@
                 <span class="track-length-hint" id="track-length-hint"></span>
               </div>
             </div>
-            <!-- Reference -->
-            <div class="scene-card">
-              <label class="sc-label">Reference Artist (optional)</label>
-              <div class="chip-group" data-field="reference">
-                <button class="chip" data-val="artbat">Artbat</button>
-                <button class="chip" data-val="sasha">Sasha</button>
-                <button class="chip" data-val="brejcha">Boris Brejcha</button>
-                <button class="chip" data-val="deadmau5">Deadmau5</button>
-                <button class="chip" data-val="tale-of-us">Tale of Us</button>
-                <button class="chip" data-val="none">None</button>
+            <!-- Energy Arc -->
+            <div class="scene-card intent-card">
+              <label class="sc-label">⚡ Energy Arc</label>
+              <p class="sc-hint">What shape is this track?</p>
+              <div class="chip-group" data-field="energyArc">
+                <button class="chip active" data-val="club-banger">Club Banger</button>
+                <button class="chip" data-val="festival-epic">Festival Epic</button>
+                <button class="chip" data-val="late-night-deep">Late Night Deep</button>
+                <button class="chip" data-val="peak-time">Peak Time</button>
+                <button class="chip" data-val="journey">The Journey</button>
+              </div>
+            </div>
+
+            <!-- Atmosphere -->
+            <div class="scene-card intent-card">
+              <label class="sc-label">🌑 Atmosphere</label>
+              <p class="sc-hint">What's the emotional frequency?</p>
+              <div class="chip-group" data-field="atmosphere">
+                <button class="chip" data-val="dark-industrial">Dark / Industrial</button>
+                <button class="chip active" data-val="euphoric">Euphoric / Uplifting</button>
+                <button class="chip" data-val="hypnotic">Hypnotic / Meditative</button>
+                <button class="chip" data-val="melancholic">Melancholic / Cinematic</button>
+                <button class="chip" data-val="tribal">Raw / Tribal</button>
+              </div>
+            </div>
+
+            <!-- Density -->
+            <div class="scene-card intent-card">
+              <label class="sc-label">◈ Peak Density</label>
+              <p class="sc-hint">How busy at the drop?</p>
+              <div class="chip-group" data-field="density">
+                <button class="chip" data-val="minimal">Minimal (3–4 layers)</button>
+                <button class="chip active" data-val="balanced">Balanced (5–6 layers)</button>
+                <button class="chip" data-val="dense">Dense (7+ layers)</button>
+              </div>
+            </div>
+
+            <!-- Intent Summary -->
+            <div class="scene-card intent-summary-card" id="intent-summary-card">
+              <label class="sc-label">🧠 Blueprint Preview</label>
+              <div class="intent-summary" id="intent-summary">
+                <div class="intent-row"><span class="intent-key">BPM range</span><span class="intent-val" id="is-bpm">—</span></div>
+                <div class="intent-row"><span class="intent-key">Swing</span><span class="intent-val" id="is-swing">—</span></div>
+                <div class="intent-row"><span class="intent-key">Intro layers</span><span class="intent-val" id="is-intro">—</span></div>
+                <div class="intent-row"><span class="intent-key">Drop density</span><span class="intent-val" id="is-drop">—</span></div>
+                <div class="intent-row"><span class="intent-key">Melody arc</span><span class="intent-val" id="is-melody">—</span></div>
+                <div class="intent-row"><span class="intent-key">Bass style</span><span class="intent-val" id="is-bass">—</span></div>
+                <div class="intent-row"><span class="intent-key">Harmonic tension</span><span class="intent-val" id="is-tension">—</span></div>
               </div>
             </div>
           </div>
