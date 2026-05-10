@@ -1037,6 +1037,12 @@ function initUpdateCheckTrigger() {
 // ════════════════════════════════════════════════════════════
 
 const BF_Audio = (() => {
+  // Guard: if Tone.js didn't load, expose no-op stubs
+  if (typeof Tone === 'undefined') {
+    console.error('Tone.js not loaded — audio disabled');
+    const noop = async () => {};
+    return { start: noop, playNote: noop, playDrum: noop, playSequence: noop, playDrumPattern: noop, stopAll: ()=>{}, getIsPlaying: ()=>false };
+  }
   let started      = false;
   let melodySynth  = null;
   let bassSynth    = null;
@@ -1192,9 +1198,15 @@ const BF_Audio = (() => {
       currentStep = step;
     }, [...Array(maxStep+1).keys()], ticksPerStep);
 
-    playSeq.start(0);
-    Tone.getTransport().start();
-    isPlaying = true;
+    try {
+      playSeq.start(0);
+      Tone.getTransport().start();
+      isPlaying = true;
+    } catch(e) {
+      console.error('Tone transport start error:', e);
+      isPlaying = false;
+      if (onStop) onStop();
+    }
   }
 
   // ── Play drum pattern (16 steps) ──
@@ -1243,6 +1255,18 @@ const BF_Audio = (() => {
 })();
 
 document.addEventListener('DOMContentLoaded', () => {
+  // Version label — do this first, independently of updater UI
+  (function() {
+    const vl = document.getElementById('tb-version-label');
+    if (!vl) return;
+    const fn = window.beatforge?.app?.getVersion || window.electronAPI?.getVersion;
+    if (fn) {
+      fn().then(v => { vl.textContent = 'v' + v; }).catch(()=>{ vl.textContent = ''; });
+    } else {
+      // Fallback: read from package.json version embedded at build time
+      vl.textContent = 'v0.3.7';
+    }
+  })();
   initChips();
   updateIntentSummary();
   initIdeaScreen();
