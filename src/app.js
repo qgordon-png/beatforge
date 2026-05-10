@@ -559,12 +559,18 @@ function drawIdeaRoll() {
   });
 }
 
+// Stored handlers so we can remove & re-add cleanly without cloning the canvas
+const _rollHandlers = {};
+
 function attachIdeaRollEvents() {
-  // Always replace canvas with a fresh clone to strip stale listeners
-  const oldCanvas = document.getElementById('idea-roll-canvas');
-  if (!oldCanvas) return;
-  const canvas = oldCanvas.cloneNode(true);
-  oldCanvas.parentNode.replaceChild(canvas, oldCanvas);
+  const canvas = document.getElementById('idea-roll-canvas');
+  if (!canvas) return;
+
+  // Strip any previously attached named handlers
+  if (_rollHandlers.mousedown) canvas.removeEventListener('mousedown', _rollHandlers.mousedown);
+  if (_rollHandlers.mousemove) canvas.removeEventListener('mousemove', _rollHandlers.mousemove);
+  if (_rollHandlers.mouseup)   canvas.removeEventListener('mouseup',   _rollHandlers.mouseup);
+  if (_rollHandlers.contextmenu) canvas.removeEventListener('contextmenu', _rollHandlers.contextmenu);
 
   const getPos = (e) => {
     const rect = canvas.getBoundingClientRect();
@@ -582,21 +588,18 @@ function attachIdeaRollEvents() {
     };
   };
 
-  canvas.addEventListener('mousedown', e => {
+  _rollHandlers.mousedown = (e) => {
     e.preventDefault();
     const {step, row} = getPos(e);
     if (e.button === 2) {
-      // Right click = delete
       ideaRoll.notes = ideaRoll.notes.filter(n => !(n.row===row && step>=n.step && step<n.step+n.len));
       drawIdeaRoll(); return;
     }
-    // Play the note we just touched
     const key = document.getElementById('idea-roll-key')?.value || 'Am';
     const root = KEY_ROOTS[key] || 69;
     const midiNote = root + 12 - row;
     const role = state.idea?.role || 'melody';
     BF_Audio.playNote(midiNote, role, 0.3).catch(()=>{});
-    // Check if clicking existing note right edge (resize)
     const snap = ideaRoll.snap;
     const snapped = Math.round(step/snap)*snap;
     const existing = ideaRoll.notes.find(n => n.row===row && snapped>=n.step && snapped<n.step+n.len);
@@ -611,9 +614,9 @@ function attachIdeaRollEvents() {
       ideaRoll.startStep = snapped;
     }
     drawIdeaRoll();
-  });
+  };
 
-  canvas.addEventListener('mousemove', e => {
+  _rollHandlers.mousemove = (e) => {
     if (!ideaRoll.drawing && !ideaRoll.resizing) return;
     const {step} = getPos(e);
     const snap = ideaRoll.snap;
@@ -626,17 +629,21 @@ function attachIdeaRollEvents() {
       ideaRoll.resizing.len = Math.max(snap, snapped - ideaRoll.resizing.step);
       drawIdeaRoll();
     }
-  });
+  };
 
-  canvas.addEventListener('mouseup', () => {
+  _rollHandlers.mouseup = () => {
     ideaRoll.drawing  = false;
     ideaRoll.resizing = null;
     ideaRoll.activeNote = null;
-    // Push notes into state
     commitIdeaRollToState();
-  });
+  };
 
-  canvas.addEventListener('contextmenu', e => e.preventDefault());
+  _rollHandlers.contextmenu = (e) => e.preventDefault();
+
+  canvas.addEventListener('mousedown',   _rollHandlers.mousedown);
+  canvas.addEventListener('mousemove',   _rollHandlers.mousemove);
+  canvas.addEventListener('mouseup',     _rollHandlers.mouseup);
+  canvas.addEventListener('contextmenu', _rollHandlers.contextmenu);
 }
 
 function commitIdeaRollToState() {
