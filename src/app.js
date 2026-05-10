@@ -1192,6 +1192,11 @@ const BF_Audio = (() => {
     console.log('[BF_Audio] playSequence called, notes=', notes?.length, 'started=', started, 'melodySynth=', !!melodySynth);
     await start();
     console.log('[BF_Audio] after start(), started=', started, 'melodySynth=', !!melodySynth);
+    // Safety net: if synths still null, try building again
+    if (!melodySynth && started) {
+      console.warn('[BF_Audio] melodySynth null after start — rebuilding synths');
+      try { buildSynths(); } catch(e) { console.error('[BF_Audio] buildSynths retry failed:', e); }
+    }
     stopAll();
 
     if (!notes || !notes.length) { console.log('[BF_Audio] no notes, returning'); return; }
@@ -1220,14 +1225,19 @@ const BF_Audio = (() => {
       }
       if (stepMap[step]) {
         stepMap[step].forEach(n => {
-          const freq = Tone.Frequency(n.note, 'midi').toFrequency();
-          const dur  = `${n.len}*${ticksPerStep}`;
-          if (role === 'bass') {
-            bassSynth.triggerAttackRelease(freq, dur, time, n.vel/127);
-          } else if (role === 'pad') {
-            padSynth.triggerAttackRelease(freq, dur, time, n.vel/127);
-          } else {
-            melodySynth.triggerAttackRelease(freq, dur, time, n.vel/127);
+          try {
+            const midi = Math.max(0, Math.min(127, Math.round(n.note)));
+            const freq = Tone.Frequency(midi, 'midi').toFrequency();
+            const dur  = `${n.len}*${ticksPerStep}`;
+            if (role === 'bass') {
+              if (bassSynth) bassSynth.triggerAttackRelease(freq, dur, time, n.vel/127);
+            } else if (role === 'pad') {
+              if (padSynth) padSynth.triggerAttackRelease(freq, dur, time, n.vel/127);
+            } else {
+              if (melodySynth) melodySynth.triggerAttackRelease(freq, dur, time, n.vel/127);
+            }
+          } catch(noteErr) {
+            console.warn('[BF_Audio] note trigger error (skipping note):', noteErr);
           }
         });
       }
@@ -1290,6 +1300,16 @@ const BF_Audio = (() => {
 
   return { start, playNote, playDrum, playSequence, playDrumPattern, stopAll, getIsPlaying };
 })();
+
+// Global safety net - prevent renderer crash from navigating away
+window.addEventListener('unhandledrejection', (e) => {
+  console.error('[BF] Unhandled promise rejection (caught globally):', e.reason);
+  e.preventDefault(); // Prevent Electron renderer crash
+});
+window.addEventListener('error', (e) => {
+  console.error('[BF] Unhandled error (caught globally):', e.message, e.filename, e.lineno);
+  // Don't e.preventDefault() here - let Electron log it but don't reload
+});
 
 document.addEventListener('DOMContentLoaded', () => {
   // Version label — do this first, independently of updater UI
