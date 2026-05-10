@@ -936,12 +936,20 @@ function initUpdaterUI() {
   const status = document.getElementById('tb-update-status');
   if (!btn || !status) return;
 
+  // Populate version label from electron
+  const verLabel = document.getElementById('tb-version-label');
+  if (verLabel && window.electronAPI?.getVersion) {
+    window.electronAPI.getVersion().then(v => {
+      if (verLabel) verLabel.textContent = 'v' + v;
+    }).catch(() => {});
+  }
+
   // Listen for update events from main process
   if (window.electronAPI?.onUpdateAvailable) {
     window.electronAPI.onUpdateAvailable((info) => {
-      status.textContent = `v${info.version} ready`;
+      status.textContent = '';
       btn.style.display = 'inline-flex';
-      btn.textContent = '↑ Install Update';
+      btn.textContent = `↑ v${info.version} ready`;
       btn.classList.add('tb-update-ready');
     });
   }
@@ -993,22 +1001,16 @@ function initUpdaterUI() {
 
 // Always show "Check for update" button on hover of titlebar version
 function initUpdateCheckTrigger() {
-  const ver = document.querySelector('.tb-version');
+  const ver = document.getElementById('tb-version-label');
   const btn = document.getElementById('tb-update-btn');
   if (!ver || !btn) return;
-  ver.style.cursor = 'pointer';
-  ver.title = 'Click to check for updates';
   ver.addEventListener('click', () => {
-    btn.style.display = 'inline-flex';
-    btn.textContent = '↑ Check for update';
-    btn.classList.remove('tb-update-ready');
+    const status = document.getElementById('tb-update-status');
+    if (status) status.textContent = 'Checking…';
     window.electronAPI?.checkForUpdates?.();
-    btn.textContent = 'Checking…';
     setTimeout(() => {
       if (!btn.classList.contains('tb-update-ready')) {
-        btn.style.display = 'none';
-        const status = document.getElementById('tb-update-status');
-        if (status) { status.textContent = 'Up to date ✓'; setTimeout(()=>{status.textContent=''},2500); }
+        if (status) { status.textContent = 'Up to date ✓'; setTimeout(()=>{ if(status) status.textContent=''; },2500); }
       }
     }, 8000);
   });
@@ -1357,6 +1359,9 @@ function goToStep(step) {
   // Update nav
   document.querySelectorAll('.nav-step').forEach(n => n.classList.remove('active'));
   document.querySelector(`.nav-step[data-step="${step}"]`).classList.add('active');
+  // Show transport bar only once past the idea screen
+  const transport = document.getElementById('tb-transport');
+  if (transport) transport.style.display = step === 'idea' ? 'none' : 'flex';
   // Mark previous steps as completed
   const steps = ['idea','scene','arrangement','drums','bass','melody','pads','export'];
   const idx = steps.indexOf(step);

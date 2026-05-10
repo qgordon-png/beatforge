@@ -14,20 +14,20 @@
       <div class="tb-brand">
         <span class="tb-logo">⚡</span>
         <span class="tb-name">BeatForge</span>
-        <span class="tb-version">v0.1</span>
+        <span class="tb-version" id="tb-version-label" title="Click to check for updates" style="cursor:pointer;opacity:0.4;font-size:10px;margin-left:4px;align-self:center;"></span>
       </div>
-      <div class="tb-transport">
+      <!-- Context transport — hidden on idea screen, shown once scene is set -->
+      <div class="tb-transport" id="tb-transport" style="display:none">
         <span class="tb-bpm" id="tb-bpm">128 BPM</span>
+        <span class="tb-sep">·</span>
         <span class="tb-key" id="tb-key">Am</span>
+        <span class="tb-sep">·</span>
         <span class="tb-genre" id="tb-genre">Melodic Techno</span>
       </div>
-      <div class="tb-midi">
-        <span class="tb-midi-dot" id="midi-status"></span>
-        <select id="midi-output" class="tb-select">
-          <option>No MIDI Output</option>
-        </select>
-        <button class="tb-update-btn" id="tb-update-btn" title="Check for update" style="display:none">
-          ↑ Update
+      <div class="tb-actions">
+        <!-- Update badge — only visible when update is ready -->
+        <button class="tb-update-btn" id="tb-update-btn" title="Update available" style="display:none">
+          ↑ Update ready
         </button>
         <span class="tb-update-status" id="tb-update-status"></span>
       </div>
@@ -568,6 +568,15 @@
           <div class="panel-header">
             <h2>Export to DAW</h2>
             <p class="panel-desc">Drag any card directly into Ableton — or click ⬇ to save the file.</p>
+          </div>
+
+          <!-- MIDI output selector -->
+          <div class="export-midi-row">
+            <label class="midi-label">🎹 MIDI Output</label>
+            <select id="midi-output" class="tb-select export-midi-select">
+              <option>No MIDI Output</option>
+            </select>
+            <span class="midi-hint">Route to LoopMIDI or a DAW virtual port</span>
           </div>
 
           <!-- Full pack button -->

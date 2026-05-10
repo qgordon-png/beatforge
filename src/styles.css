@@ -42,25 +42,31 @@ html, body { height:100%; background:var(--bg); color:var(--text); font-family:'
 .tb-logo { font-size:16px; }
 .tb-name { font-weight:800; font-size:13px; color:var(--gold); letter-spacing:1px; text-transform:uppercase; }
 .tb-version { font-size:10px; color:var(--dim); font-family:'JetBrains Mono',monospace; }
-.tb-transport { display:flex; align-items:center; gap:16px; }
+.tb-transport { display:none; align-items:center; gap:10px; }
 .tb-bpm, .tb-key, .tb-genre {
   font-size:11px; font-weight:600; color:var(--muted);
   background:rgba(255,255,255,0.03); border:1px solid var(--border);
-  padding:4px 12px; border-radius:4px;
+  padding:3px 10px; border-radius:4px;
   font-family:'JetBrains Mono',monospace;
 }
 .tb-key { color:var(--gold); border-color:var(--border-gold); }
-.tb-midi { display:flex; align-items:center; gap:8px; }
-.tb-midi-dot {
-  width:7px; height:7px; border-radius:50%;
-  background:var(--red); flex-shrink:0;
-}
-.tb-midi-dot.connected { background:var(--green); box-shadow:0 0 6px var(--green); }
+.tb-sep { color:var(--border); font-size:12px; }
+.tb-actions { display:flex; align-items:center; gap:8px; margin-left:auto; }
 .tb-select {
   background:rgba(255,255,255,0.04); border:1px solid var(--border);
   color:var(--muted); font-size:11px; padding:4px 8px; border-radius:4px;
   font-family:'JetBrains Mono',monospace; outline:none; cursor:pointer;
 }
+/* Export panel MIDI row */
+.export-midi-row {
+  display:flex; align-items:center; gap:12px;
+  padding:10px 16px; background:rgba(255,255,255,0.02);
+  border:1px solid var(--border); border-radius:8px;
+  margin-bottom:16px;
+}
+.midi-label { font-size:12px; font-weight:600; color:var(--muted); white-space:nowrap; }
+.export-midi-select { flex:0 0 auto; min-width:180px; }
+.midi-hint { font-size:11px; color:var(--dim); }
 
 /* ─── MAIN LAYOUT ─── */
 #main {
