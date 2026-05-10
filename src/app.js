@@ -461,12 +461,8 @@ function initIdeaScreen() {
     e.preventDefault();
     e.stopPropagation();
     console.log('[BF] Play idea clicked, ideaRoll.notes=', ideaRoll.notes.length);
-    // Eagerly resume AudioContext on the user gesture (Electron requirement)
-    if (typeof Tone !== 'undefined') {
-      Tone.start().then(() => playIdeaRoll()).catch(() => playIdeaRoll());
-    } else {
-      playIdeaRoll();
-    }
+    // playIdeaRoll -> BF_Audio.playSequence -> start() handles AudioContext internally
+    playIdeaRoll();
   });
   document.getElementById('idea-roll-suggest')?.addEventListener('click', suggestIdeaPhrase);
   document.getElementById('idea-roll-quant')?.addEventListener('click', quantiseIdeaRoll);
@@ -1120,13 +1116,15 @@ const BF_Audio = (() => {
     }).toDestination();
 
     // Pad — lush PolySynth
+    // NOTE: Tone.Reverb uses OfflineAudioContext which crashes Electron renderer.
+    // Using FeedbackDelay instead for a similar lush effect safely.
     padSynth = new Tone.PolySynth(Tone.Synth, {
       oscillator: { type: 'triangle' },
       envelope: { attack: 0.4, decay: 0.3, sustain: 0.8, release: 2.0 },
       volume: -10,
     });
-    const padReverb = new Tone.Reverb({ decay: 4, wet: 0.6 }).toDestination();
-    padSynth.connect(padReverb);
+    const padDelay = new Tone.FeedbackDelay({ delayTime: '8n', feedback: 0.5, wet: 0.4 }).toDestination();
+    padSynth.connect(padDelay);
 
     // Drums — MembraneSynth (kick) + MetalSynth (hats) + NoiseSynth (snare)
     drumSynths = {
