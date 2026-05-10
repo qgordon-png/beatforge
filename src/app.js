@@ -589,46 +589,45 @@ function attachIdeaRollEvents() {
   };
 
   _rollHandlers.mousedown = (e) => {
-    e.preventDefault();
-    const {step, row} = getPos(e);
-    if (e.button === 2) {
-      ideaRoll.notes = ideaRoll.notes.filter(n => !(n.row===row && step>=n.step && step<n.step+n.len));
-      drawIdeaRoll(); return;
-    }
-    const key = document.getElementById('idea-roll-key')?.value || 'Am';
-    const root = KEY_ROOTS[key] || 69;
-    const midiNote = root + 12 - row;
-    const role = state.idea?.role || 'melody';
-    BF_Audio.playNote(midiNote, role, 0.3).catch(()=>{});
-    const snap = ideaRoll.snap;
-    const snapped = Math.round(step/snap)*snap;
-    const existing = ideaRoll.notes.find(n => n.row===row && snapped>=n.step && snapped<n.step+n.len);
-    if (existing) {
-      ideaRoll.resizing = existing;
-      ideaRoll.startStep = snapped;
-    } else {
-      const newNote = { row, step: snapped, len: snap, vel: 100 };
-      ideaRoll.notes.push(newNote);
-      ideaRoll.activeNote = newNote;
-      ideaRoll.drawing = true;
-      ideaRoll.startStep = snapped;
-    }
-    drawIdeaRoll();
+    try {
+      e.preventDefault();
+      const {step, row} = getPos(e);
+      if (e.button === 2) {
+        ideaRoll.notes = ideaRoll.notes.filter(n => !(n.row===row && step>=n.step && step<n.step+n.len));
+        drawIdeaRoll(); return;
+      }
+      const snap = ideaRoll.snap;
+      const snapped = Math.round(step / snap) * snap;
+      const existing = ideaRoll.notes.find(n => n.row===row && snapped>=n.step && snapped<n.step+n.len);
+      if (existing) {
+        ideaRoll.resizing = existing;
+        ideaRoll.startStep = snapped;
+      } else {
+        const newNote = { row, step: snapped, len: snap, vel: 100 };
+        ideaRoll.notes.push(newNote);
+        ideaRoll.activeNote = newNote;
+        ideaRoll.drawing = true;
+        ideaRoll.startStep = snapped;
+      }
+      drawIdeaRoll();
+    } catch(err) { console.error('Roll mousedown error:', err); }
   };
 
   _rollHandlers.mousemove = (e) => {
-    if (!ideaRoll.drawing && !ideaRoll.resizing) return;
-    const {step} = getPos(e);
-    const snap = ideaRoll.snap;
-    const snapped = Math.max(snap, Math.round(step/snap)*snap);
-    if (ideaRoll.drawing && ideaRoll.activeNote) {
-      ideaRoll.activeNote.len = Math.max(snap, snapped - ideaRoll.activeNote.step);
-      drawIdeaRoll();
-    }
-    if (ideaRoll.resizing) {
-      ideaRoll.resizing.len = Math.max(snap, snapped - ideaRoll.resizing.step);
-      drawIdeaRoll();
-    }
+    try {
+      if (!ideaRoll.drawing && !ideaRoll.resizing) return;
+      const {step} = getPos(e);
+      const snap = ideaRoll.snap;
+      const snapped = Math.max(snap, Math.round(step/snap)*snap);
+      if (ideaRoll.drawing && ideaRoll.activeNote) {
+        ideaRoll.activeNote.len = Math.max(snap, snapped - ideaRoll.activeNote.step);
+        drawIdeaRoll();
+      }
+      if (ideaRoll.resizing) {
+        ideaRoll.resizing.len = Math.max(snap, snapped - ideaRoll.resizing.step);
+        drawIdeaRoll();
+      }
+    } catch(err) { console.error('Roll mousemove error:', err); }
   };
 
   _rollHandlers.mouseup = () => {
