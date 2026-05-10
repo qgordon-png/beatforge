@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════
-   BEATFORGE — Main App Logic
+   BFF — Main App Logic
 ═══════════════════════════════════════════════ */
 
 // ─── STATE ───
@@ -969,7 +969,7 @@ function initUpdaterUI() {
   // Version label — independent of button existence
   const verLabel = document.getElementById('tb-version-label');
   if (verLabel) {
-    const _getVer = window.beatforge?.app?.getVersion;
+    const _getVer = window.bff?.app?.getVersion;
     if (_getVer) {
       _getVer().then(v => { verLabel.textContent = 'v' + v; }).catch(() => { verLabel.textContent = 'v0.3.9'; });
     } else {
@@ -1055,7 +1055,7 @@ function initUpdateCheckTrigger() {
 
 
 // ════════════════════════════════════════════════════════════
-// BEATFORGE AUDIO ENGINE — Tone.js
+// BFF AUDIO ENGINE — Tone.js
 // Synth playback for idea roll, drums, bass, melody previews.
 // ════════════════════════════════════════════════════════════
 
@@ -1312,11 +1312,11 @@ window.addEventListener('error', (e) => {
 document.addEventListener('DOMContentLoaded', () => {
   // Version label — do this first, independently of updater UI
   (function() {
-    console.log('[BF] DOMContentLoaded, window.beatforge=', !!window.beatforge, 'getVersion=', !!window.beatforge?.app?.getVersion);
+    console.log('[BF] DOMContentLoaded, window.bff=', !!window.bff, 'getVersion=', !!window.bff?.app?.getVersion);
     const vl = document.getElementById('tb-version-label');
     console.log('[BF] tb-version-label element=', !!vl);
     if (!vl) return;
-    const fn = window.beatforge?.app?.getVersion;
+    const fn = window.bff?.app?.getVersion;
     if (fn) {
       fn().then(v => { console.log('[BF] version from IPC=', v); vl.textContent = 'v' + v; }).catch(e=>{ console.error('[BF] getVersion error:', e); vl.textContent = 'v0.3.9'; });
     } else {
@@ -1702,6 +1702,8 @@ function initPanelButtons() {
   document.getElementById('export-midi')?.addEventListener('click', () => exportFullMidiPack());
   document.getElementById('export-arrangement')?.addEventListener('click', () => exportArrangement());
   document.getElementById('export-drums-midi')?.addEventListener('click', () => exportDrumMidi());
+  document.getElementById('export-drums-split')?.addEventListener('click', () => exportDrumSplitPack());
+  document.getElementById('export-melody-split')?.addEventListener('click', () => exportMelodySplitPack());
   document.getElementById('export-bass-midi')?.addEventListener('click', () => exportBassMidi());
   document.getElementById('export-melody-midi')?.addEventListener('click', () => exportMelodyMidi());
   document.getElementById('export-drums-midi-quick')?.addEventListener('click', () => exportDrumMidi());
@@ -1758,8 +1760,8 @@ async function handleAIChat(userMessage) {
     };
 
     // Call AI backend
-    if (typeof window.beatforge !== 'undefined') {
-      const result = await window.beatforge.ai.generate(userMessage, context);
+    if (typeof window.bff !== 'undefined') {
+      const result = await window.bff.ai.generate(userMessage, context);
       // Remove thinking message
       const msgs = document.getElementById('ai-messages');
       msgs.removeChild(msgs.lastChild);
@@ -2180,6 +2182,114 @@ function writeVarLen(value) {
   return bytes.reverse();
 }
 
+
+// ── Build a single-instrument drum MIDI (one row only) ──
+function buildDrumMidiSplit(pattern, bpm, bars, rowId) {
+  const ticksPerBeat = 480;
+  const ticksPerStep = ticksPerBeat / 4;
+  const totalSteps = 16 * bars;
+  const note = DRUM_MIDI_NOTES[rowId] || 36;
+
+  const header = [
+    0x4D, 0x54, 0x68, 0x64, 0x00, 0x00, 0x00, 0x06,
+    0x00, 0x00, 0x00, 0x01,
+    (ticksPerBeat >> 8) & 0xFF, ticksPerBeat & 0xFF
+  ];
+
+  let events = [];
+  const tempo = Math.round(60000000 / bpm);
+  events.push({ tick: 0, data: [0xFF, 0x51, 0x03, (tempo >> 16) & 0xFF, (tempo >> 8) & 0xFF, tempo & 0xFF] });
+
+  const tname = ('BFF ' + rowId.charAt(0).toUpperCase() + rowId.slice(1));
+  const tnameBytes = tname.split('').map(c => c.charCodeAt(0));
+  events.push({ tick: 0, data: [0xFF, 0x03, tnameBytes.length, ...tnameBytes] });
+
+  for (let bar = 0; bar < bars; bar++) {
+    for (let step = 0; step < 16; step++) {
+      const key = `${rowId}-${step}`;
+      if (pattern[key]) {
+        const tick = (bar * 16 + step) * ticksPerStep;
+        const dur  = Math.round(ticksPerStep * 0.85);
+        const vel  = rowId === 'kick' ? 110 : rowId === 'snare' ? 100 : 85;
+        events.push({ tick, data: [0x99, note, vel] });
+        events.push({ tick: tick + dur, data: [0x89, note, 0] });
+      }
+    }
+  }
+
+  const endTick = totalSteps * ticksPerStep;
+  events.push({ tick: endTick, data: [0xFF, 0x2F, 0x00] });
+  events.sort((a, b) => a.tick - b.tick);
+
+  let trackBytes = [];
+  let prevTick = 0;
+  events.forEach(evt => {
+    const delta = evt.tick - prevTick;
+    prevTick = evt.tick;
+    trackBytes.push(...writeVarLen(delta));
+    trackBytes.push(...evt.data);
+  });
+
+  const trackLen = trackBytes.length;
+  const track = [
+    0x4D, 0x54, 0x72, 0x6B,
+    (trackLen >> 24) & 0xFF, (trackLen >> 16) & 0xFF,
+    (trackLen >> 8) & 0xFF, trackLen & 0xFF,
+    ...trackBytes
+  ];
+  return new Uint8Array([...header, ...track]);
+}
+
+// ── Export all drum instruments as separate MIDI files in a ZIP ──
+async function exportDrumSplitPack() {
+  const hasNotes = Object.values(state.drums.pattern).some(v => v);
+  if (!hasNotes) {
+    addMessage('bot', "Your drum pattern is empty! Build some drums first. <em>No notes, no zip.</em>");
+    return;
+  }
+
+  const bpm  = state.scene.bpm;
+  const totalMins = parseFloat(state.scene.length) || 6;
+  const bars = Math.max(4, Math.round((totalMins * bpm) / 4));
+  const safe = `BFF_Drums_${bpm}bpm`;
+
+  const drumRows = [
+    { id: 'kick',  label: 'Kick' },
+    { id: 'snare', label: 'Snare' },
+    { id: 'chh',   label: 'HatsC' },
+    { id: 'ohh',   label: 'HatsO' },
+    { id: 'perc',  label: 'Perc'  },
+  ];
+
+  const files = [];
+  const exported = [];
+
+  drumRows.forEach(row => {
+    // Check if this instrument has any hits
+    const hasHits = Array.from({length: 16}, (_, s) => `${row.id}-${s}`).some(k => state.drums.pattern[k]);
+    if (hasHits) {
+      const bytes = buildDrumMidiSplit(state.drums.pattern, bpm, bars, row.id);
+      files.push({ name: `${safe}_${row.label}.mid`, bytes });
+      exported.push(row.label);
+    }
+  });
+
+  // Also include the combined all-drums file
+  files.push({ name: `${safe}_ALL.mid`, bytes: buildDrumMidi(state.drums.pattern, bpm, bars) });
+
+  const zip = buildZip(files);
+  const zipName = `${safe}_SplitPack.zip`;
+
+  if (isElectron()) {
+    await window.bff.midi.save(zipName, Array.from(zip));
+  } else {
+    downloadBytes(zip, zipName, 'application/zip');
+  }
+
+  addMessage('bot', `🥁 <strong>${zipName}</strong> saved — ${exported.length} split drum MIDI files: <strong>${exported.join(' · ')}</strong> + one combined ALL file.<br><br>In Ableton: drop each onto its own Drum Rack pad or instrument channel. Mute/unmute per section to control when hats and perc enter. <em>Your drums just got surgical.</em>`);
+}
+
+
 function buildDrumMidi(pattern, bpm, bars = 2) {
   const ticksPerBeat = 480;
   const ticksPerStep = ticksPerBeat / 4; // 16th note = quarter note / 4
@@ -2209,7 +2319,7 @@ function buildDrumMidi(pattern, bpm, bars = 2) {
   });
 
   // Track name
-  const trackName = 'BeatForge Drums';
+  const trackName = 'BFF Drums';
   const nameBytes = trackName.split('').map(c => c.charCodeAt(0));
   events.push({
     tick: 0,
@@ -2267,7 +2377,7 @@ function buildDrumMidi(pattern, bpm, bars = 2) {
   return new Uint8Array([...header, ...track]);
 }
 
-function buildNotesMidi(notes, channelNum, bpm, trackName = 'BeatForge') {
+function buildNotesMidi(notes, channelNum, bpm, trackName = 'BFF') {
   const ticksPerBeat = 480;
   const ticksPerStep = ticksPerBeat / 4;
 
@@ -2345,7 +2455,7 @@ function exportDrumMidi() {
   const totalMins = parseFloat(state.scene.length) || 6;
   const bars = Math.max(4, Math.round((totalMins * state.scene.bpm) / 4));
   const midi = buildDrumMidi(state.drums.pattern, state.scene.bpm, bars);
-  const filename = `BeatForge_Drums_${state.scene.bpm}bpm_${bars}bars.mid`;
+  const filename = `BFF_Drums_${state.scene.bpm}bpm_${bars}bars.mid`;
   downloadMidi(midi, filename);
   addMessage('bot', `Drums exported → <strong>${filename}</strong>. Drop it on a Drum Rack in Ableton. Notes are mapped to the default Kit-Core 909: Kick=C1, Snare=D1, CH=F#1, OH=A#1, Perc=D2. <em>You're welcome.</em>`);
 }
@@ -2355,8 +2465,8 @@ function exportBassMidi() {
     addMessage('bot', "No bass notes yet — generate a bassline first! <em>Bass first, then glory.</em>");
     return;
   }
-  const midi = buildNotesMidi(state.bass.notes, 0, state.scene.bpm, 'BeatForge Bass');
-  downloadMidi(midi, `BeatForge_Bass_${state.scene.key}_${state.scene.bpm}bpm.mid`);
+  const midi = buildNotesMidi(state.bass.notes, 0, state.scene.bpm, 'BFF Bass');
+  downloadMidi(midi, `BFF_Bass_${state.scene.key}_${state.scene.bpm}bpm.mid`);
   addMessage('bot', `Bass exported. Drop it on a synth channel in ${state.scene.key}. <em>That low end isn't going to produce itself.</em>`);
 }
 
@@ -2365,9 +2475,62 @@ function exportMelodyMidi() {
     addMessage('bot', "No melody notes yet — generate a melody first! <em>Step 5, genius.</em>");
     return;
   }
-  const midi = buildNotesMidi(state.melody.notes, 1, state.scene.bpm, 'BeatForge Melody');
-  downloadMidi(midi, `BeatForge_Melody_${state.scene.key}_${state.scene.bpm}bpm.mid`);
+  const midi = buildNotesMidi(state.melody.notes, 1, state.scene.bpm, 'BFF Melody');
+  downloadMidi(midi, `BFF_Melody_${state.scene.key}_${state.scene.bpm}bpm.mid`);
   addMessage('bot', `Melody exported in ${state.scene.key}. <em>Now THAT's a hook.</em>`);
+}
+
+// ── Export melody split: Arp + Lead as separate MIDI files ──
+async function exportMelodySplitPack() {
+  const melNotes  = state.melody.notes  || [];
+  const arpNotes  = state.arp?.notes    || [];
+  const leadNotes = state.lead?.notes   || [];
+
+  // Fallback: if no separate arp/lead, try to split melody by note density
+  // Short notes (len <= 2 steps) = arp, longer = lead
+  let arpOut  = arpNotes.length  ? arpNotes  : melNotes.filter(n => (n.duration || n.len || 1) <= 2);
+  let leadOut = leadNotes.length ? leadNotes : melNotes.filter(n => (n.duration || n.len || 1) > 2);
+
+  if (!melNotes.length && !arpNotes.length && !leadNotes.length) {
+    addMessage('bot', "No melody or arp notes yet! Generate or draw a melody first.");
+    return;
+  }
+
+  const bpm  = state.scene.bpm;
+  const key  = state.scene.key;
+  const safe = `BFF_Melody_${key.replace('#','s')}_${bpm}bpm`;
+  const files = [];
+  const exported = [];
+
+  if (arpOut.length) {
+    files.push({ name: `${safe}_Arp.mid`, bytes: buildNotesMidi(arpOut, 1, bpm, 'BFF Arp') });
+    exported.push('Arp');
+  }
+  if (leadOut.length) {
+    files.push({ name: `${safe}_Lead.mid`, bytes: buildNotesMidi(leadOut, 2, bpm, 'BFF Lead') });
+    exported.push('Lead');
+  }
+  // Always include combined
+  if (melNotes.length) {
+    files.push({ name: `${safe}_Combined.mid`, bytes: buildNotesMidi(melNotes, 1, bpm, 'BFF Melody') });
+    exported.push('Combined');
+  }
+
+  if (!files.length) {
+    addMessage('bot', "Nothing to split — generate a melody first!");
+    return;
+  }
+
+  const zip = buildZip(files);
+  const zipName = `${safe}_SplitPack.zip`;
+
+  if (isElectron()) {
+    await window.bff.midi.save(zipName, Array.from(zip));
+  } else {
+    downloadBytes(zip, zipName, 'application/zip');
+  }
+
+  addMessage('bot', `🎵 <strong>${zipName}</strong> — split as: <strong>${exported.join(' · ')}</strong>.<br><br>In Ableton: Arp goes on a repeating synth (high-passed, running throughout). Lead goes on your main synth/vocal bus — bring it in on drops only. <em>Arp supports. Lead dominates. That's the game.</em>`);
 }
 
 function exportPadsMidi() {
@@ -2375,8 +2538,8 @@ function exportPadsMidi() {
     addMessage('bot', "No pad notes yet — generate pads first! <em>Atmosphere doesn't generate itself.</em>");
     return;
   }
-  const midi = buildNotesMidi(state.pads.notes, 2, state.scene.bpm, 'BeatForge Pads');
-  downloadMidi(midi, `BeatForge_Pads_${state.scene.key}_${state.scene.bpm}bpm.mid`);
+  const midi = buildNotesMidi(state.pads.notes, 2, state.scene.bpm, 'BFF Pads');
+  downloadMidi(midi, `BFF_Pads_${state.scene.key}_${state.scene.bpm}bpm.mid`);
   addMessage('bot', `Pads exported. Long chords in ${state.scene.key}. <em>Beautiful.</em>`);
 }
 
@@ -2390,38 +2553,78 @@ async function exportFullMidiPack() {
 
   const bpm  = state.scene.bpm;
   const key  = state.scene.key;
-  const safe = `BeatForge_${key.replace('#','s')}_${bpm}bpm`;
+  const totalMins = parseFloat(state.scene.length) || 6;
+  const bars = Math.max(4, Math.round((totalMins * bpm) / 4));
+  const safe = `BFF_${key.replace('#','s')}_${bpm}bpm`;
   const files = [];
   const exported = [];
 
+  // ── DRUMS: split per instrument ──
   if (Object.values(state.drums.pattern).some(v => v)) {
-    files.push({ name: `${safe}_Drums.mid`, bytes: buildDrumMidi(state.drums.pattern, bpm, 2) });
-    exported.push('Drums');
+    const drumRows = [
+      { id: 'kick', label: 'Kick' }, { id: 'snare', label: 'Snare' },
+      { id: 'chh',  label: 'HatsC' }, { id: 'ohh', label: 'HatsO' },
+      { id: 'perc', label: 'Perc' },
+    ];
+    drumRows.forEach(row => {
+      const hasHits = Array.from({length:16}, (_,s) => `${row.id}-${s}`).some(k => state.drums.pattern[k]);
+      if (hasHits) {
+        files.push({ name: `${safe}_${row.label}.mid`, bytes: buildDrumMidiSplit(state.drums.pattern, bpm, bars, row.id) });
+        exported.push(row.label);
+      }
+    });
+    // Combined drums too
+    files.push({ name: `${safe}_Drums_ALL.mid`, bytes: buildDrumMidi(state.drums.pattern, bpm, bars) });
   }
+
+  // ── BASS ──
   if (state.bass.notes.length) {
-    files.push({ name: `${safe}_Bass.mid`, bytes: buildNotesMidi(state.bass.notes, 0, bpm, 'BeatForge Bass') });
+    files.push({ name: `${safe}_Bass.mid`, bytes: buildNotesMidi(state.bass.notes, 0, bpm, 'BFF Bass') });
     exported.push('Bass');
   }
-  if (state.melody.notes.length) {
-    files.push({ name: `${safe}_Melody.mid`, bytes: buildNotesMidi(state.melody.notes, 1, bpm, 'BeatForge Melody') });
-    exported.push('Melody');
+
+  // ── MELODY: split into Arp + Lead ──
+  const melNotes  = state.melody.notes || [];
+  const arpNotes  = state.arp?.notes   || [];
+  const leadNotes = state.lead?.notes  || [];
+
+  if (melNotes.length || arpNotes.length || leadNotes.length) {
+    const arpOut  = arpNotes.length  ? arpNotes  : melNotes.filter(n => (n.duration || n.len || 1) <= 2);
+    const leadOut = leadNotes.length ? leadNotes : melNotes.filter(n => (n.duration || n.len || 1) > 2);
+
+    if (arpOut.length) {
+      files.push({ name: `${safe}_Arp.mid`, bytes: buildNotesMidi(arpOut, 1, bpm, 'BFF Arp') });
+      exported.push('Arp');
+    }
+    if (leadOut.length) {
+      files.push({ name: `${safe}_Lead.mid`, bytes: buildNotesMidi(leadOut, 2, bpm, 'BFF Lead') });
+      exported.push('Lead');
+    }
+    if (melNotes.length) {
+      files.push({ name: `${safe}_Melody.mid`, bytes: buildNotesMidi(melNotes, 1, bpm, 'BFF Melody') });
+    }
   }
+
+  // ── PADS ──
   if (state.pads.notes.length) {
-    files.push({ name: `${safe}_Pads.mid`, bytes: buildNotesMidi(state.pads.notes, 2, bpm, 'BeatForge Pads') });
+    files.push({ name: `${safe}_Pads.mid`, bytes: buildNotesMidi(state.pads.notes, 2, bpm, 'BFF Pads') });
     exported.push('Pads');
   }
 
-  // Bundle everything into one ZIP
   const zip = buildZip(files);
   const zipName = `${safe}_MIDIPack.zip`;
 
   if (isElectron()) {
-    await window.beatforge.midi.save(zipName, Array.from(zip));
+    await window.bff.midi.save(zipName, Array.from(zip));
   } else {
     downloadBytes(zip, zipName, 'application/zip');
   }
 
-  addMessage('bot', `📦 <strong>${zipName}</strong> saved — ${exported.length} MIDI files inside: <strong>${exported.join(', ')}</strong>. Unzip, drop each onto a separate Ableton channel. Drums → Drum Rack. Everything else → your synth of choice. <em>One file. No mess. You're welcome.</em>`);
+  addMessage('bot', `📦 <strong>${zipName}</strong> — ${files.length} files inside.<br>
+    🥁 Drums split: Kick · Snare · HatsC · HatsO · Perc (+ combined ALL)<br>
+    🎵 Melody split: Arp + Lead as separate clips<br>
+    🔊 ${exported.join(' · ')}<br><br>
+    Drop each onto its own Ableton channel. Bring hats and perc in section by section. Arp runs throughout — Lead comes in on your drops. <em>That's how Quinton does it. You're welcome.</em>`);
 }
 
 
@@ -2432,7 +2635,7 @@ async function exportFullMidiPack() {
 // ═══════════════════════════════════════════════
 
 function isElectron() {
-  return typeof window !== 'undefined' && window.beatforge && window.beatforge.app && window.beatforge.app.isElectron;
+  return typeof window !== 'undefined' && window.bff && window.bff.app && window.bff.app.isElectron;
 }
 
 // Generate MIDI bytes for a given layer
@@ -2441,18 +2644,18 @@ function getMidiForLayer(layer) {
   const key = state.scene.key;
   switch (layer) {
     case 'drums':
-      return { bytes: buildDrumMidi(state.drums.pattern, bpm, 2), filename: `BeatForge_Drums_${bpm}bpm.mid` };
+      return { bytes: buildDrumMidi(state.drums.pattern, bpm, 2), filename: `BFF_Drums_${bpm}bpm.mid` };
     case 'bass':
       return state.bass.notes.length
-        ? { bytes: buildNotesMidi(state.bass.notes, 0, bpm, 'BeatForge Bass'), filename: `BeatForge_Bass_${key}.mid` }
+        ? { bytes: buildNotesMidi(state.bass.notes, 0, bpm, 'BFF Bass'), filename: `BFF_Bass_${key}.mid` }
         : null;
     case 'melody':
       return state.melody.notes.length
-        ? { bytes: buildNotesMidi(state.melody.notes, 1, bpm, 'BeatForge Melody'), filename: `BeatForge_Melody_${key}.mid` }
+        ? { bytes: buildNotesMidi(state.melody.notes, 1, bpm, 'BFF Melody'), filename: `BFF_Melody_${key}.mid` }
         : null;
     case 'pads':
       return state.pads.notes.length
-        ? { bytes: buildNotesMidi(state.pads.notes, 2, bpm, 'BeatForge Pads'), filename: `BeatForge_Pads_${key}.mid` }
+        ? { bytes: buildNotesMidi(state.pads.notes, 2, bpm, 'BFF Pads'), filename: `BFF_Pads_${key}.mid` }
         : null;
     default:
       return null;
@@ -2492,7 +2695,7 @@ function initDragCards() {
       if (isElectron()) {
         // Tell main process to write temp file + start native OS drag
         e.preventDefault(); // suppress browser drag, we use native
-        window.beatforge.midi.startDrag(midi.filename, Array.from(midi.bytes));
+        window.bff.midi.startDrag(midi.filename, Array.from(midi.bytes));
       } else {
         // Browser fallback: set drag data (won't open in Ableton but at least something happens)
         e.dataTransfer.effectAllowed = 'copy';
@@ -2549,7 +2752,7 @@ async function saveMidiLayer(layer, card) {
 
   if (isElectron()) {
     // Use native save dialog
-    const result = await window.beatforge.midi.save(midi.filename, Array.from(midi.bytes));
+    const result = await window.bff.midi.save(midi.filename, Array.from(midi.bytes));
     if (result && result.saved) {
       pulseCard(card, 'saved');
       addMessage('bot', `${layer.charAt(0).toUpperCase() + layer.slice(1)} saved → <strong>${result.path}</strong>. <em>You're welcome.</em>`);
@@ -2599,7 +2802,7 @@ function buildSingleDrumMidi(rowId, pattern, bpm, bars = 2) {
   events.push({ tick: 0, data: [0xFF, 0x51, 0x03,
     (tempo >> 16) & 0xFF, (tempo >> 8) & 0xFF, tempo & 0xFF] });
 
-  const name = `BeatForge ${rowId.charAt(0).toUpperCase() + rowId.slice(1)}`;
+  const name = `BFF ${rowId.charAt(0).toUpperCase() + rowId.slice(1)}`;
   const nameBytes = name.split('').map(c => c.charCodeAt(0));
   events.push({ tick: 0, data: [0xFF, 0x03, nameBytes.length, ...nameBytes] });
 
@@ -2661,8 +2864,8 @@ async function exportDrumsSplit(fromCard) {
     // Save dialog for each file in sequence
     for (const row of active) {
       const bytes = buildSingleDrumMidi(row.id, state.drums.pattern, bpm, bars);
-      const filename = `BeatForge_${row.name.replace(/\s+/g,'_')}_${bpm}bpm.mid`;
-      await window.beatforge.midi.save(filename, Array.from(bytes));
+      const filename = `BFF_${row.name.replace(/\s+/g,'_')}_${bpm}bpm.mid`;
+      await window.bff.midi.save(filename, Array.from(bytes));
     }
     if (fromCard) pulseCard(fromCard, 'saved');
     addMessage('bot', `Split export done — ${active.length} files, one per instrument. Each one goes on its own track. <em>Now THAT's a clean session.</em>`);
@@ -2671,7 +2874,7 @@ async function exportDrumsSplit(fromCard) {
     active.forEach((row, i) => {
       setTimeout(() => {
         const bytes = buildSingleDrumMidi(row.id, state.drums.pattern, bpm, bars);
-        const filename = `BeatForge_${row.name.replace(/\s+/g,'_')}_${bpm}bpm.mid`;
+        const filename = `BFF_${row.name.replace(/\s+/g,'_')}_${bpm}bpm.mid`;
         downloadMidi(bytes, filename);
       }, i * 400);
     });
@@ -3293,7 +3496,7 @@ async function exportArrangement() {
   const cheatBytes = new TextEncoder().encode(cheatLines);
 
   // ── ZIP both into one download ──
-  const safeName = `BeatForge_${key.replace('#','s')}_${bpm}bpm`;
+  const safeName = `BFF_${key.replace('#','s')}_${bpm}bpm`;
   const zip = buildZip([
     { name: `${safeName}_Arrangement.mid`, bytes: allBytes },
     { name: `${safeName}_CC_Map.txt`,      bytes: cheatBytes },
@@ -3301,7 +3504,7 @@ async function exportArrangement() {
 
   const zipFilename = `${safeName}.zip`;
   if (isElectron()) {
-    await window.beatforge.midi.save(zipFilename, Array.from(zip));
+    await window.bff.midi.save(zipFilename, Array.from(zip));
   } else {
     downloadBytes(zip, zipFilename, 'application/zip');
   }
@@ -3431,7 +3634,7 @@ function downloadBytes(bytes, filename, mime) {
 // ── Build cheat sheet string (returns string) ──
 function buildCheatSheet(sections, bpm, key) {
   const lines = [
-    `BeatForge Arrangement Export`,
+    `BFF Arrangement Export`,
     `Track: ${key} · ${bpm} BPM · ${sections.length} sections`,
     `Generated: ${new Date().toLocaleString()}`,
     ``,
@@ -3443,7 +3646,7 @@ function buildCheatSheet(sections, bpm, key) {
     `CC 11  →  Expression/Volume riding`,
     ``,
     `── HOW TO MAP IN ABLETON ──`,
-    `1. Drop BeatForge_Arrangement.mid into Session View`,
+    `1. Drop BFF_Arrangement.mid into Session View`,
     `2. Ableton auto-creates one track per MIDI channel`,
     `3. On each track assign your instrument (Serum, Sylenth, Drum Rack etc)`,
     `4. Open any clip → Envelopes → select CC74 lane → automation is already drawn`,
@@ -3466,7 +3669,7 @@ function buildCheatSheet(sections, bpm, key) {
       return `${String(i+1).padStart(2,'0')} ${s}\n   ${mel}\n   ${bas}\n   ${drm}`;
     }),
     ``,
-    `Generated by BeatForge — beatforge.app`,
+    `Generated by BFF — bff.app`,
   ];
   return lines.join('\n');
 }
@@ -3474,7 +3677,7 @@ function buildCheatSheet(sections, bpm, key) {
 // ── CC Cheat Sheet (legacy, kept for compatibility) ──
 function exportCCCheatSheet(sections, layers, bpm, key) {
   const lines = [
-    `BeatForge Arrangement Export`,
+    `BFF Arrangement Export`,
     `Track: ${key} · ${bpm} BPM · ${sections.length} sections`,
     `Generated: ${new Date().toLocaleString()}`,
     ``,
@@ -3525,7 +3728,7 @@ function exportCCCheatSheet(sections, layers, bpm, key) {
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
   a.href = url;
-  a.download = `BeatForge_CC_CheatSheet_${key}_${bpm}bpm.txt`;
+  a.download = `BFF_CC_CheatSheet_${key}_${bpm}bpm.txt`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -3538,7 +3741,7 @@ function exportCCCheatSheet(sections, layers, bpm, key) {
 // Listens for messages from main process, shows toast
 // ═══════════════════════════════════════════════
 function initAutoUpdater() {
-  if (!window.beatforge?.updater) return;
+  if (!window.bff?.updater) return;
 
   const toast      = document.getElementById('update-toast');
   const title      = document.getElementById('update-toast-title');
@@ -3554,9 +3757,9 @@ function initAutoUpdater() {
   function hideToast()  { toast.classList.add('update-toast--hidden'); }
 
   // Main sends 'updater:available' when an update is found (starts downloading)
-  window.beatforge.updater.onAvailable(({ version }) => {
+  window.bff.updater.onAvailable(({ version }) => {
     icon.textContent    = '⬇';
-    title.textContent   = `BeatForge ${version} available`;
+    title.textContent   = `BFF ${version} available`;
     msg.textContent     = 'Downloading in the background…';
     if (progressW) progressW.style.display = '';
     if (restartBtn) restartBtn.style.display = 'none';
@@ -3564,21 +3767,21 @@ function initAutoUpdater() {
   });
 
   // Main sends 'updater:progress' during download
-  window.beatforge.updater.onProgress(({ percent }) => {
+  window.bff.updater.onProgress(({ percent }) => {
     if (progressB) progressB.style.width = `${percent}%`;
   });
 
   // Main sends 'updater:downloaded' when ready to install
-  window.beatforge.updater.onDownloaded(({ version }) => {
+  window.bff.updater.onDownloaded(({ version }) => {
     icon.textContent    = '✅';
     title.textContent   = `v${version} ready to install`;
-    msg.textContent     = 'Restart BeatForge to apply the update.';
+    msg.textContent     = 'Restart BFF to apply the update.';
     if (progressW) progressW.style.display = 'none';
     if (restartBtn) restartBtn.style.display = '';
     showToast();
   });
 
-  if (restartBtn) restartBtn.addEventListener('click', () => window.beatforge.updater.install());
+  if (restartBtn) restartBtn.addEventListener('click', () => window.bff.updater.install());
   if (dismissBtn) dismissBtn.addEventListener('click', hideToast);
 }
 

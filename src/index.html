@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>BeatForge</title>
+  <title>BFF — Best Friend in Music Production</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -13,7 +13,7 @@
     <header id="titlebar">
       <div class="tb-brand">
         <span class="tb-logo">⚡</span>
-        <span class="tb-name">BeatForge</span>
+        <span class="tb-name">BFF</span><span class="tb-tagline">best friend in production</span>
         <span class="tb-version" id="tb-version-label" title="Click to check for updates" style="cursor:pointer;font-size:10px;margin-left:4px;align-self:center;"></span>
       </div>
       <!-- Context transport — hidden on idea screen, shown once scene is set -->
@@ -652,7 +652,8 @@
               <div class="drag-card-handle">
                 <span class="drag-handle-icon">⠿</span> drag to Ableton
               </div>
-              <button class="drag-card-save" id="export-melody-midi" title="Save file">⬇</button>
+              <button class="drag-card-save" id="export-melody-midi" title="Save combined melody .mid">⬇ Save</button>
+              <button class="drag-card-save split-btn" id="export-melody-split" title="Save Arp + Lead as separate MIDI files">⚡ Split</button>
             </div>
 
             <div class="drag-card" id="drag-card-pads" data-layer="pads">

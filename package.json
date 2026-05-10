@@ -1,7 +1,7 @@
 {
-  "name": "beatforge",
-  "version": "0.4.5",
-  "description": "AI Co-Producer \u2014 Layer by layer music production assistant",
+  "name": "bff",
+  "version": "0.5.0",
+  "description": "BFF \u2014 Your Best Friend in Music Production",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -20,8 +20,8 @@
     "electron-updater": "^6.1.7"
   },
   "build": {
-    "appId": "com.beatforge.app",
-    "productName": "BeatForge",
+    "appId": "com.bff.app",
+    "productName": "BFF",
     "win": {
       "target": "nsis",
       "icon": "assets/icon.png"
@@ -40,9 +40,10 @@
     "publish": {
       "provider": "github",
       "owner": "qgordon-png",
-      "repo": "beatforge",
+      "repo": "bff",
       "releaseType": "release"
     },
     "artifactName": "${productName}-Setup-${version}.${ext}"
-  }
+  },
+  "productName": "BFF"
 }

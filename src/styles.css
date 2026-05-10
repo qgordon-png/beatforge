@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════
-   BEATFORGE — UI STYLESHEET
+   BFF — UI STYLESHEET
    Dark theme, gold accents, production-grade feel
 ═══════════════════════════════════════════════ */
 
@@ -42,6 +42,7 @@ html, body { height:100%; background:var(--bg); color:var(--text); font-family:'
 .tb-logo { font-size:16px; }
 .tb-name { font-weight:800; font-size:13px; color:var(--gold); letter-spacing:1px; text-transform:uppercase; }
 .tb-version { font-size:10px; color:#888; font-family:'JetBrains Mono',monospace; }
+.tb-tagline { font-size:9px; color:#444; letter-spacing:0.6px; text-transform:lowercase; margin-left:6px; font-style:italic; align-self:center; }
 .tb-transport { display:none; align-items:center; gap:10px; }
 .tb-bpm, .tb-key, .tb-genre {
   font-size:11px; font-weight:600; color:var(--muted);
@@ -650,6 +651,25 @@ html, body { height:100%; background:var(--bg); color:var(--text); font-family:'
   align-items: center;
   justify-content: center;
   transition: all 0.15s;
+}
+/* Split export button — sits left of the save button */
+.split-btn {
+  position: absolute;
+  bottom: 0.7rem;
+  right: 2.4rem;
+  width: auto;
+  padding: 0 8px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  background: rgba(201,168,76,0.12);
+  border-color: rgba(201,168,76,0.4);
+  color: #c9a84c;
+  white-space: nowrap;
+}
+.split-btn:hover {
+  background: rgba(201,168,76,0.25);
+  border-color: #c9a84c;
+  color: #fff;
 }
 .drag-card-save:hover {
   background: rgba(201,168,76,0.15);
