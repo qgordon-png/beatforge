@@ -1060,10 +1060,14 @@ const BF_Audio = (() => {
     try {
       console.log('[BF_Audio] calling Tone.start()...');
       await Tone.start();
+      // Also directly resume the underlying AudioContext in case Tone.start() doesn't
+      if (Tone.context?.rawContext?.state === 'suspended') {
+        await Tone.context.rawContext.resume();
+      }
       console.log('[BF_Audio] Tone.start() succeeded, context state=', Tone.context.state);
       started = true;
       buildSynths();
-      console.log('[BF_Audio] buildSynths() complete');
+      console.log('[BF_Audio] buildSynths() complete, melodySynth=', !!melodySynth);
     } catch(e) {
       console.error('[BF_Audio] Tone.start() FAILED:', e);
     }

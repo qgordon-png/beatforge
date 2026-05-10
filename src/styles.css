@@ -18,7 +18,7 @@
   --border-gold: rgba(201,168,76,0.2);
   --text: #e0e0e0;
   --muted: #555;
-  --dim: #333;
+  --dim: #666;
   --white: #ffffff;
   --red: #ff6b6b;
   --green: #6bffa0;
@@ -41,7 +41,7 @@ html, body { height:100%; background:var(--bg); color:var(--text); font-family:'
 .tb-brand { display:flex; align-items:center; gap:8px; }
 .tb-logo { font-size:16px; }
 .tb-name { font-weight:800; font-size:13px; color:var(--gold); letter-spacing:1px; text-transform:uppercase; }
-.tb-version { font-size:10px; color:var(--dim); font-family:'JetBrains Mono',monospace; }
+.tb-version { font-size:10px; color:#888; font-family:'JetBrains Mono',monospace; }
 .tb-transport { display:none; align-items:center; gap:10px; }
 .tb-bpm, .tb-key, .tb-genre {
   font-size:11px; font-weight:600; color:var(--muted);
