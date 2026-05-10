@@ -1096,68 +1096,34 @@ const BF_Audio = (() => {
 
   // ── Build all synth voices ──
   function buildSynths() {
-    // Melody / Lead — bright FM synth
-    melodySynth = new Tone.PolySynth(Tone.FMSynth, {
-      harmonicity: 3.5,
-      modulationIndex: 10,
-      oscillator: { type: 'sine' },
-      envelope: { attack: 0.01, decay: 0.1, sustain: 0.4, release: 0.8 },
-      modulation: { type: 'square' },
-      modulationEnvelope: { attack: 0.01, decay: 0.2, sustain: 0.3, release: 0.5 },
-      volume: -6,
-    }).toDestination();
+    // ── Melody / Lead — supersaw detuned PolySynth with delay ──
+    const melDelay = new Tone.FeedbackDelay({ delayTime: '8n.', feedback: 0.35, wet: 0.22 }).toDestination();
+    const melFilter = new Tone.Filter({ frequency: 7000, type: 'lowpass', rolloff: -24 }).connect(melDelay);
+    melodySynth = new Tone.PolySynth(Tone.Synth, {
+      oscillator: { type: 'fatsawtooth', count: 3, spread: 20 },
+      envelope: { attack: 0.005, decay: 0.18, sustain: 0.65, release: 1.4 },
+      volume: -9,
+    }).connect(melFilter);
 
-    // Bass — warm MonoSynth
+    // ── Bass — sub+saw with drive and envelope filter ──
+    const bassFilter = new Tone.Filter({ frequency: 700, type: 'lowpass', rolloff: -24 }).toDestination();
+    const bassDist   = new Tone.Distortion({ distortion: 0.12, wet: 0.25 }).connect(bassFilter);
     bassSynth = new Tone.MonoSynth({
-      oscillator: { type: 'sawtooth' },
-      envelope:   { attack: 0.01, decay: 0.15, sustain: 0.5, release: 0.4 },
-      filterEnvelope: { attack: 0.01, decay: 0.3, sustain: 0.2, release: 0.4, baseFrequency: 200, octaves: 3 },
+      oscillator: { type: 'fatsawtooth', count: 2, spread: 8 },
+      envelope: { attack: 0.005, decay: 0.12, sustain: 0.85, release: 0.3 },
+      filterEnvelope: { attack: 0.005, decay: 0.22, sustain: 0.45, release: 0.4, baseFrequency: 110, octaves: 2.5 },
       volume: -4,
-    }).toDestination();
+    }).connect(bassDist);
 
-    // Pad — lush PolySynth
-    // NOTE: Tone.Reverb uses OfflineAudioContext which crashes Electron renderer.
-    // Using FeedbackDelay instead for a similar lush effect safely.
+    // ── Pad — wide detuned PolySynth with chorus ──
+    const padChorus = new Tone.Chorus({ frequency: 2.5, delayTime: 3.5, depth: 0.7, wet: 0.5 }).toDestination();
+    padChorus.start();
+    const padFilter = new Tone.Filter({ frequency: 4500, type: 'lowpass' }).connect(padChorus);
     padSynth = new Tone.PolySynth(Tone.Synth, {
-      oscillator: { type: 'triangle' },
-      envelope: { attack: 0.4, decay: 0.3, sustain: 0.8, release: 2.0 },
-      volume: -10,
-    });
-    const padDelay = new Tone.FeedbackDelay({ delayTime: '8n', feedback: 0.5, wet: 0.4 }).toDestination();
-    padSynth.connect(padDelay);
-
-    // Drums — MembraneSynth (kick) + MetalSynth (hats) + NoiseSynth (snare)
-    drumSynths = {
-      kick: new Tone.MembraneSynth({
-        pitchDecay: 0.08, octaves: 8,
-        envelope: { attack: 0.001, decay: 0.3, sustain: 0, release: 0.2 },
-        volume: -2,
-      }).toDestination(),
-
-      snare: new Tone.NoiseSynth({
-        noise: { type: 'white' },
-        envelope: { attack: 0.001, decay: 0.15, sustain: 0, release: 0.1 },
-        volume: -6,
-      }).toDestination(),
-
-      chh: new Tone.MetalSynth({
-        frequency: 400, envelope: { attack: 0.001, decay: 0.04, release: 0.01 },
-        harmonicity: 5.1, modulationIndex: 32, resonance: 4000, octaves: 1.5,
-        volume: -14,
-      }).toDestination(),
-
-      ohh: new Tone.MetalSynth({
-        frequency: 400, envelope: { attack: 0.001, decay: 0.25, release: 0.1 },
-        harmonicity: 5.1, modulationIndex: 32, resonance: 4000, octaves: 1.5,
-        volume: -12,
-      }).toDestination(),
-
-      perc: new Tone.MembraneSynth({
-        pitchDecay: 0.03, octaves: 4,
-        envelope: { attack: 0.001, decay: 0.1, sustain: 0, release: 0.05 },
-        volume: -10,
-      }).toDestination(),
-    };
+      oscillator: { type: 'fatsawtooth', count: 2, spread: 28 },
+      envelope: { attack: 0.7, decay: 0.5, sustain: 0.85, release: 3.5 },
+      volume: -13,
+    }).connect(padFilter);
   }
 
   // ── Trigger single note (for piano roll click feedback) ──
@@ -1204,14 +1170,19 @@ const BF_Audio = (() => {
     const ticksPerStep = '16n'; // each step = 1/16 note
     const synth = role==='bass' ? bassSynth : role==='pad' ? padSynth : melodySynth;
 
-    // Build event map: step → [note events]
+    // Build event map: normalise {time,duration} OR {step,len} formats
+    const normNotes = notes.map(n => ({
+      step: n.step !== undefined ? n.step : Math.round((n.time || 0)),
+      len:  n.len  !== undefined ? n.len  : Math.max(1, Math.round(n.duration || 2)),
+      note: n.note,
+      vel:  n.vel || n.velocity || 90,
+    }));
     const stepMap = {};
-    notes.forEach(n => {
+    normNotes.forEach(n => {
       if (!stepMap[n.step]) stepMap[n.step] = [];
       stepMap[n.step].push(n);
     });
-
-    const maxStep = Math.max(...notes.map(n => n.step + n.len));
+    const maxStep = Math.max(...normNotes.map(n => n.step + n.len));
     let currentStep = 0;
 
     playSeq = new Tone.Sequence((time, step) => {
@@ -1224,15 +1195,15 @@ const BF_Audio = (() => {
       if (stepMap[step]) {
         stepMap[step].forEach(n => {
           try {
-            const midi = Math.max(0, Math.min(127, Math.round(n.note)));
+            const midi = Math.max(21, Math.min(108, Math.round(n.note)));
             const freq = Tone.Frequency(midi, 'midi').toFrequency();
-            const dur  = `${n.len}*${ticksPerStep}`;
+            const durSec = (60 / (Tone.getTransport().bpm.value || 128)) / 4 * Math.max(1, n.len || 1);
             if (role === 'bass') {
-              if (bassSynth) bassSynth.triggerAttackRelease(freq, dur, time, n.vel/127);
+              if (bassSynth) bassSynth.triggerAttackRelease(freq, durSec, time, Math.min(1, (n.vel||90)/127));
             } else if (role === 'pad') {
-              if (padSynth) padSynth.triggerAttackRelease(freq, dur, time, n.vel/127);
+              if (padSynth) padSynth.triggerAttackRelease(freq, durSec, time, Math.min(1, (n.vel||70)/127));
             } else {
-              if (melodySynth) melodySynth.triggerAttackRelease(freq, dur, time, n.vel/127);
+              if (melodySynth) melodySynth.triggerAttackRelease(freq, durSec, time, Math.min(1, (n.vel||90)/127));
             }
           } catch(noteErr) {
             console.warn('[BF_Audio] note trigger error (skipping note):', noteErr);
@@ -3259,258 +3230,104 @@ const LAYER_META = {
 
 // ── Main arrangement export ──
 async function exportArrangement() {
-  const sections  = getSections(state.scene.length);
-  const bpm       = state.scene.bpm;
-  const key       = state.scene.key;
-  const totalMins = parseFloat(state.scene.length) || 6;
+  const sections    = getSections(state.scene.length);
+  const bpm         = state.scene.bpm  || 128;
+  const key         = state.scene.key  || 'Am';
+  const genre       = state.scene.energyArc  || 'club-banger';
+  const atmo        = state.scene.atmosphere || 'euphoric';
+  const totalMins   = parseFloat(state.scene.length) || 6;
   const defaultBars = getBarsPerSection(bpm, totalMins, sections.length);
-  const ticksPerBeat = 480;
-  const ticksPerBar  = ticksPerBeat * 4;   // 4/4 time
 
-  if (!state.melody.notes?.length && !state.bass.notes?.length && !Object.keys(state.drums.pattern||{}).length) {
-    addMessage('bot', "Nothing generated yet — build your patterns first, then export. <em>I can't automate silence. Well, I could, but you wouldn't enjoy it.</em>");
-    return;
-  }
-
-  // ── Build one multi-track Format-1 MIDI per layer-track ──
-  // Tracks: Tempo map | Drums | Bass | Arp | Lead | Pads | FX
-  // Each section's notes are placed at the correct bar offset so dragging
-  // a single MIDI file into Ableton gives you the full arrangement timeline.
-
-  // Pre-compute section bar offsets
-  const sectionBarOffsets = [];
-  let runningBar = 0;
-  sections.forEach((name, si) => {
-    sectionBarOffsets.push(runningBar);
-    const evo = state.progression?.[si];
-    // Use the longest phrase in this section to determine how many bars it occupies
-    const melBars  = evo?.melody?.phraseLen || defaultBars;
-    const bassBars = evo?.bass?.phraseLen   || defaultBars;
-    const secBars  = Math.max(melBars, bassBars, defaultBars);
-    runningBar += secBars;
-  });
-  const totalBars = runningBar;
-
-  // ── Drum split into individual instrument tracks ──
-  const DRUM_TRACKS = [
-    { id:'kick',  name:'Kick',   note:36, ch:9 },
-    { id:'snare', name:'Snare',  note:38, ch:9 },
-    { id:'chh',   name:'Hi-Hat', note:42, ch:9 },
-    { id:'ohh',   name:'Open HH',note:46, ch:9 },
-    { id:'perc',  name:'Perc',   note:50, ch:9 },
-  ];
-
-  // Build per-track event lists (all sections merged into timeline)
-  const trackEvents = {}; // key → [{tick, data}]
-
-  const addEv = (trackId, tick, data) => {
-    if (!trackEvents[trackId]) trackEvents[trackId] = [];
-    trackEvents[trackId].push({ tick, data });
+  const roleLabel = {
+    intro:     '🌑 INTRO      — sparse, filtering in, tension building',
+    build:     '📈 BUILD      — layers stacking, filter opens, energy rising',
+    drop:      '💥 DROP       — full energy, all elements in, peak impact',
+    breakdown: '🌊 BREAKDOWN  — stripped back, pads/arp only, emotional reset',
+    outro:     '🌅 OUTRO      — layers drop out, fade, journey ends',
   };
 
-  sections.forEach((secName, si) => {
-    const role   = getSectionRole(secName);
-    const evo    = state.progression?.[si] || null;
-    const offsetTick = sectionBarOffsets[si] * ticksPerBar;
-    const secBars = evo?.melody?.phraseLen
-                  ? Math.max(evo.melody.phraseLen, evo?.bass?.phraseLen || defaultBars, defaultBars)
-                  : defaultBars;
-    const arrActive = (layId) => state.arrangement[`${layId}-${si}`] !== false;
-    const ticksPerStep = ticksPerBeat / 4;
-
-    // ── DRUMS ──
-    if (arrActive('kick')) {
-      const activeEls = evo?.drums?.elements || DRUM_TRACKS.map(d=>d.id);
-      const density   = evo?.drums?.density  || 5;
-      const vel = Math.min(127, Math.round(70 + density * 5));
-      DRUM_TRACKS.forEach(dt => {
-        if (!activeEls.includes(dt.id)) return;
-        for (let bar = 0; bar < secBars; bar++) {
-          for (let step = 0; step < 16; step++) {
-            if (state.drums.pattern[`${dt.id}-${step}`]) {
-              const t   = offsetTick + (bar * 16 + step) * ticksPerStep;
-              const dur = Math.round(ticksPerStep * 0.9);
-              addEv(`drum_${dt.id}`, t,       [0x99, dt.note, vel]);
-              addEv(`drum_${dt.id}`, t + dur, [0x89, dt.note, 0]);
-            }
-          }
-        }
-      });
-    }
-
-    // ── BASS ──
-    if (arrActive('bass') && state.bass.notes?.length) {
-      const bEvo     = evo?.bass;
-      const phraseLen = bEvo?.phraseLen || defaultBars;
-      const intensity = bEvo?.intensity || 100;
-      const bStyle    = bEvo?.style || 'progression';
-      const scale     = getScale(key);
-      let notes = state.bass.notes;
-      if (bStyle === 'root') {
-        notes = notes.filter(n => n.note % 12 === scale[0] % 12);
-        if (!notes.length) notes = state.bass.notes.slice(0,1);
-      } else if (bStyle === 'walk') {
-        const filtered = notes.filter(n => {
-          const pc = n.note % 12;
-          return pc === scale[0] % 12 || pc === scale[4] % 12;
-        });
-        if (filtered.length) notes = filtered;
+  let barCursor = 1;
+  const sectionData = sections.map((name, si) => {
+    const evo   = state.progression?.[si];
+    const bars  = Math.max(evo?.melody?.phraseLen || defaultBars, defaultBars);
+    const role  = getSectionRole(name);
+    const label = roleLabel[role] || `⚙ ${name.toUpperCase()}`;
+    const active = [];
+    ['kick','snare','chh','ohh','bass','lead','pad','fx'].forEach(lid => {
+      if (state.arrangement[`${lid}-${si}`] !== false) {
+        const nm = {kick:'Kick',snare:'Snare',chh:'HatsC',ohh:'HatsO',bass:'Bass',lead:'Arp/Lead',pad:'Pads',fx:'FX'}[lid];
+        active.push(nm);
       }
-      const phraseTicks = phraseLen * ticksPerBar;
-      const totalSecTicks = secBars * ticksPerBar;
-      let off = 0;
-      while (off < totalSecTicks) {
-        notes.forEach(n => {
-          const nt  = n.time !== undefined ? n.time * ticksPerStep : (n.tick||0);
-          const nd  = n.duration !== undefined ? n.duration * ticksPerStep : ticksPerStep;
-          const t   = offsetTick + off + nt;
-          const vel = Math.min(127, Math.round((n.velocity||100) * (intensity/100)));
-          addEv('bass', t,      [0x90, n.note, vel]);
-          addEv('bass', t + nd, [0x80, n.note, 0]);
-        });
-        off += phraseTicks;
-      }
-    }
-
-    // ── MELODY → ARP track + LEAD track ──
-    if (arrActive('lead') && state.melody.notes?.length) {
-      const mEvo      = evo?.melody;
-      const phraseLen = mEvo?.phraseLen  || defaultBars;
-      const intensity = mEvo?.intensity  || 100;
-      const density   = mEvo?.noteDensity || 7;
-      const phraseTicks = phraseLen * ticksPerBar;
-      const totalSecTicks = secBars * ticksPerBar;
-
-      // Split melody notes: shorter duration = arp, longer = lead
-      const allNotes = state.melody.notes;
-      const avgDur   = allNotes.reduce((s,n) => s + (n.duration||2), 0) / allNotes.length;
-      const arpNotes  = allNotes.filter(n => (n.duration||2) <= avgDur);
-      const leadNotes = allNotes.filter(n => (n.duration||2) >  avgDur);
-      // Fallback: if all same duration, put all in arp and duplicate to lead
-      const useArp  = arpNotes.length  ? arpNotes  : allNotes;
-      const useLead = leadNotes.length ? leadNotes : allNotes;
-
-      // Filter by density
-      const filterByDensity = (notes) => {
-        if (density >= 7) return notes;
-        const pitches = [...new Set(notes.map(n => n.note))].slice(0, density);
-        return notes.filter(n => pitches.includes(n.note));
-      };
-
-      const writeNotes = (trackId, ch, notes) => {
-        if (!notes.length) return;
-        let off = 0;
-        while (off < totalSecTicks) {
-          notes.forEach(n => {
-            const nt  = n.time !== undefined ? n.time * ticksPerStep : (n.tick||0);
-            const nd  = n.duration !== undefined ? n.duration * ticksPerStep : ticksPerStep;
-            const t   = offsetTick + off + nt;
-            const vel = Math.min(127, Math.round((n.velocity||100) * (intensity/100)));
-            addEv(trackId, t,      [0x90|ch, n.note, vel]);
-            addEv(trackId, t + nd, [0x80|ch, n.note, 0]);
-          });
-          off += phraseTicks;
-        }
-      };
-
-      writeNotes('arp',  1, filterByDensity(useArp));
-      writeNotes('lead', 2, filterByDensity(useLead));
-    }
-
-    // ── PADS ──
-    if (arrActive('pad') && state.pads.notes?.length) {
-      const phraseLen = defaultBars;
-      const phraseTicks = phraseLen * ticksPerBar;
-      const totalSecTicks = secBars * ticksPerBar;
-      let off = 0;
-      while (off < totalSecTicks) {
-        state.pads.notes.forEach(n => {
-          const nt  = n.time !== undefined ? n.time * ticksPerStep : (n.tick||0);
-          const nd  = n.duration !== undefined ? n.duration * ticksPerStep : ticksPerStep;
-          const t   = offsetTick + off + nt;
-          addEv('pads', t,      [0x93, n.note, n.velocity||60]);
-          addEv('pads', t + nd, [0x83, n.note, 0]);
-        });
-        off += phraseTicks;
-      }
-    }
-
-    // ── FX ──
-    if (arrActive('fx')) {
-      // FX = CC-only track: reverb throw on builds/breakdowns, filter sweep on drops
-      const ccCurves = getCCAutomation(role, 'fx');
-      const totalSecTicks = secBars * ticksPerBar;
-      const ccEvts = buildCCEvents(ccCurves, totalSecTicks, 4);
-      ccEvts.forEach(e => addEv('fx', offsetTick + e.tick, e.data));
-    }
+    });
+    const mins = Math.round((bars * 4 / bpm) * 100) / 100;
+    const start = barCursor;
+    barCursor += bars;
+    return { name, label, bars, mins, active, start, end: barCursor - 1 };
   });
 
-  // ── Assemble Format-1 MIDI (multiple tracks) ──
-  const endTick = totalBars * ticksPerBar + ticksPerBeat;
-  const tempo   = Math.round(60000000 / bpm);
+  const totalBars = sectionData.reduce((s,x) => s + x.bars, 0);
+  const totalTime = Math.round((totalBars * 4 / bpm) * 100) / 100;
 
-  // Track 0: tempo map
-  const tempoTrack = buildRawTrack('Tempo Map', [
-    { tick:0, data:[0xFF,0x51,0x03,(tempo>>16)&0xFF,(tempo>>8)&0xFF,tempo&0xFF] },
-    { tick:0, data:[0xFF,0x58,0x04,0x04,0x02,0x18,0x08] }, // 4/4
-    { tick: endTick, data:[0xFF,0x2F,0x00] }
-  ]);
-
-  const TRACK_ORDER = [
-    { id:'drum_kick',  name:'Kick',    ch:9 },
-    { id:'drum_snare', name:'Snare',   ch:9 },
-    { id:'drum_chh',   name:'Hi-Hat',  ch:9 },
-    { id:'drum_ohh',   name:'Open HH', ch:9 },
-    { id:'drum_perc',  name:'Perc',    ch:9 },
-    { id:'bass',       name:'Bass',    ch:0 },
-    { id:'arp',        name:'Arp',     ch:1 },
-    { id:'lead',       name:'Lead',    ch:2 },
-    { id:'pads',       name:'Pads',    ch:3 },
-    { id:'fx',         name:'FX',      ch:4 },
+  const L = (s) => s;
+  const lines = [
+    '╔══════════════════════════════════════════════════════════════╗',
+    '║  BFF — ARRANGEMENT BLUEPRINT                                 ║',
+    '╚══════════════════════════════════════════════════════════════╝',
+    '',
+    `  Key         : ${key}`,
+    `  BPM         : ${bpm}`,
+    `  Genre Arc   : ${genre}`,
+    `  Atmosphere  : ${atmo}`,
+    `  Total       : ${totalTime} min  (${totalBars} bars)`,
+    '',
+    '──────────────────────────────────────────────────────────────',
+    '  SECTION MAP',
+    '──────────────────────────────────────────────────────────────',
+    '',
   ];
 
-  const tracks = [tempoTrack];
-  TRACK_ORDER.forEach(t => {
-    const evts = trackEvents[t.id];
-    if (!evts || !evts.length) return;
-    evts.push({ tick: endTick, data:[0xFF,0x2F,0x00] });
-    tracks.push(buildRawTrack(t.name, evts));
+  sectionData.forEach((s, i) => {
+    lines.push(`  ${String(i+1).padStart(2,'0')}. ${s.label}`);
+    lines.push(`       Bars ${s.start}–${s.end}  (${s.bars} bars / ~${s.mins} min)`);
+    lines.push(`       Layers: ${s.active.join(', ') || 'silent'}`);
+    lines.push('');
   });
 
-  // MIDI header: format 1, N tracks
-  const numTracks = tracks.length;
-  const midiHeader = [
-    0x4D,0x54,0x68,0x64,
-    0x00,0x00,0x00,0x06,
-    0x00,0x01,                              // format 1
-    (numTracks>>8)&0xFF, numTracks&0xFF,
-    (ticksPerBeat>>8)&0xFF, ticksPerBeat&0xFF
-  ];
-  const allBytes = new Uint8Array([
-    ...midiHeader,
-    ...tracks.flatMap(t => Array.from(t))
-  ]);
+  lines.push('──────────────────────────────────────────────────────────────');
+  lines.push('  HOW TO USE IN ABLETON');
+  lines.push('──────────────────────────────────────────────────────────────');
+  lines.push('');
+  lines.push('  1. Hit "Export Full MIDI Pack" → unzip → one folder of MIDIs');
+  lines.push('  2. Switch Ableton to Arrangement View  (Tab)');
+  lines.push('  3. Drop each file onto its own track');
+  lines.push('  4. Use this sheet to decide where each clip goes:');
+  lines.push('       Arp    → runs the whole track underneath');
+  lines.push('       Lead   → drops in at the DROP sections only');
+  lines.push('       HatsC  → enters at first DROP, stays in');
+  lines.push('       HatsO  → sparse in builds, open on drop off-beats');
+  lines.push('       Perc   → adds complexity in second half drops');
+  lines.push('  5. Sidechain bass + pads to kick for that pump');
+  lines.push('');
+  lines.push('  ⚡ Generated by BFF — Your Best Friend in Music Production');
+  lines.push("     You're welcome. — Skippy");
+  lines.push('');
 
-  // ── Also build a CC cheat sheet txt ──
-  const cheatLines = buildCheatSheet(sections, bpm, key);
-  const cheatBytes = new TextEncoder().encode(cheatLines);
+  const text = lines.join('\n');
+  const textBytes = new TextEncoder().encode(text);
+  const safeName  = `BFF_${key.replace('#','s')}_${bpm}bpm_Arrangement`;
 
-  // ── ZIP both into one download ──
-  const safeName = `BFF_${key.replace('#','s')}_${bpm}bpm`;
-  const zip = buildZip([
-    { name: `${safeName}_Arrangement.mid`, bytes: allBytes },
-    { name: `${safeName}_CC_Map.txt`,      bytes: cheatBytes },
-  ]);
-
-  const zipFilename = `${safeName}.zip`;
   if (isElectron()) {
-    await window.bff.midi.save(zipFilename, Array.from(zip));
+    await window.bff.midi.save(`${safeName}.txt`, Array.from(textBytes));
   } else {
-    downloadBytes(zip, zipFilename, 'application/zip');
+    downloadBytes(textBytes, `${safeName}.txt`, 'text/plain');
   }
 
-  addMessage('bot', `<strong>ZIP exported</strong> — one multi-track MIDI + CC map. Drag <em>${safeName}_Arrangement.mid</em> into Ableton session view. It'll land ${TRACK_ORDER.filter(t=>trackEvents[t.id]?.length).length} tracks wide with every section already in the right position on the timeline. Kick, snare, hats all split. Arp and lead are separate tracks. <em>You're welcome.</em>`);
+  addMessage('bot', `📋 <strong>${safeName}.txt</strong> — your arrangement blueprint.<br>
+    ${sectionData.length} sections: <strong>${sectionData.map(s=>s.name).join(' → ')}</strong><br><br>
+    This is your map. Hit <strong>Export Full MIDI Pack</strong> for the actual MIDI files, then follow the blueprint to lay them out in Ableton. <em>Structure first. Music fills it. That\'s how it\'s done.</em>`);
 }
+
+
 
 // ── Build a raw MIDI track chunk from events array ──
 function buildRawTrack(name, events) {
