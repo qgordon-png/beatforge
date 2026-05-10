@@ -1,6 +1,6 @@
 {
   "name": "beatforge",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "AI Co-Producer \u2014 Layer by layer music production assistant",
   "main": "main.js",
   "scripts": {

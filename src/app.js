@@ -951,8 +951,9 @@ function initUpdaterUI() {
 
   // Populate version label from electron
   const verLabel = document.getElementById('tb-version-label');
-  if (verLabel && window.electronAPI?.getVersion) {
-    window.electronAPI.getVersion().then(v => {
+  const _getVer = window.beatforge?.app?.getVersion || window.electronAPI?.getVersion;
+  if (verLabel && _getVer) {
+    _getVer().then(v => {
       if (verLabel) verLabel.textContent = 'v' + v;
     }).catch(() => {});
   }
