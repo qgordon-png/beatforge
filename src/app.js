@@ -945,18 +945,20 @@ function buildTrackFromIdea() {
 
 // ── AUTO UPDATER UI ──────────────────────────────────────────
 function initUpdaterUI() {
+  // Version label — independent of button existence
+  const verLabel = document.getElementById('tb-version-label');
+  if (verLabel) {
+    const _getVer = window.beatforge?.app?.getVersion;
+    if (_getVer) {
+      _getVer().then(v => { verLabel.textContent = 'v' + v; }).catch(() => { verLabel.textContent = 'v0.3.9'; });
+    } else {
+      verLabel.textContent = 'v0.3.9';
+    }
+  }
+
   const btn    = document.getElementById('tb-update-btn');
   const status = document.getElementById('tb-update-status');
   if (!btn || !status) return;
-
-  // Populate version label from electron
-  const verLabel = document.getElementById('tb-version-label');
-  const _getVer = window.beatforge?.app?.getVersion || window.electronAPI?.getVersion;
-  if (verLabel && _getVer) {
-    _getVer().then(v => {
-      if (verLabel) verLabel.textContent = 'v' + v;
-    }).catch(() => {});
-  }
 
   // Listen for update events from main process
   if (window.electronAPI?.onUpdateAvailable) {
@@ -1056,11 +1058,12 @@ const BF_Audio = (() => {
     if (started) return;
     try {
       await Tone.start();
+      started = true;
+      buildSynths();
     } catch(e) {
-      console.warn('Tone.start() error (may already be running):', e);
+      console.error('Tone.start() failed — audio unavailable:', e);
+      // Don't set started=true so we retry on next gesture
     }
-    started = true;
-    buildSynths();
   }
 
   // ── Build all synth voices ──
@@ -3481,7 +3484,7 @@ function exportCCCheatSheet(sections, layers, bpm, key) {
 // Listens for messages from main process, shows toast
 // ═══════════════════════════════════════════════
 function initAutoUpdater() {
-  if (!window.beatforge?.updater) return; // not in Electron
+  if (!window.beatforge?.updater) return;
 
   const toast      = document.getElementById('update-toast');
   const title      = document.getElementById('update-toast-title');
@@ -3491,33 +3494,38 @@ function initAutoUpdater() {
   const progressB  = document.getElementById('update-progress-bar');
   const restartBtn = document.getElementById('update-restart-btn');
   const dismissBtn = document.getElementById('update-dismiss-btn');
+  if (!toast) return;
 
   function showToast() { toast.classList.remove('update-toast--hidden'); }
-  function hideToast() { toast.classList.add('update-toast--hidden'); }
+  function hideToast()  { toast.classList.add('update-toast--hidden'); }
 
-  window.beatforge.updater.onStatus(({ type, version, message }) => {
+  // Main sends 'updater:available' when an update is found (starts downloading)
+  window.beatforge.updater.onAvailable(({ version }) => {
+    icon.textContent    = '⬇';
+    title.textContent   = `BeatForge ${version} available`;
+    msg.textContent     = 'Downloading in the background…';
+    if (progressW) progressW.style.display = '';
+    if (restartBtn) restartBtn.style.display = 'none';
     showToast();
-    if (type === 'downloading') {
-      icon.textContent = '⬇';
-      title.textContent = `BeatForge ${version} available`;
-      msg.textContent = 'Downloading in the background...';
-      progressW.style.display = '';
-      restartBtn.style.display = 'none';
-    } else if (type === 'ready') {
-      icon.textContent = '✅';
-      title.textContent = `BeatForge ${version} ready`;
-      msg.textContent = 'Restart to apply the update.';
-      progressW.style.display = 'none';
-      restartBtn.style.display = '';
-    }
   });
 
+  // Main sends 'updater:progress' during download
   window.beatforge.updater.onProgress(({ percent }) => {
-    progressB.style.width = `${percent}%`;
+    if (progressB) progressB.style.width = `${percent}%`;
   });
 
-  restartBtn.addEventListener('click', () => window.beatforge.updater.install());
-  dismissBtn.addEventListener('click', hideToast);
+  // Main sends 'updater:downloaded' when ready to install
+  window.beatforge.updater.onDownloaded(({ version }) => {
+    icon.textContent    = '✅';
+    title.textContent   = `v${version} ready to install`;
+    msg.textContent     = 'Restart BeatForge to apply the update.';
+    if (progressW) progressW.style.display = 'none';
+    if (restartBtn) restartBtn.style.display = '';
+    showToast();
+  });
+
+  if (restartBtn) restartBtn.addEventListener('click', () => window.beatforge.updater.install());
+  if (dismissBtn) dismissBtn.addEventListener('click', hideToast);
 }
 
 
