@@ -384,6 +384,9 @@ const ideaRoll = {
   scaleDegrees: [],   // MIDI notes that are in scale
   drawing: false,
   resizing: null,
+  moving: null,
+  moveOffsetStep: 0,
+  moveOffsetRow: 0,
   startStep: null,
   startRow: null,
   activeNote: null,
@@ -519,17 +522,47 @@ function drawIdeaRoll() {
   const root  = KEY_ROOTS[key] || 69;
   const scale = SCALES[key]    || [0,2,3,5,7,8,10];
 
-  // Background rows
+  // ── Scale guidelines ──
+  // Chord tones for current atmosphere (scale degrees 0,2,4 = root,3rd,5th)
+  const chordTonePCs = [0, 4, 7].map(d => ((root % 12) + d + 12) % 12); // root, major 3rd/minor 3rd, 5th
+  const scaleChordPCs = [scale[0]%12, scale[2]%12, scale[4]%12];
+
   for (let r = 0; r < ideaRoll.rows; r++) {
     const midi = root + 12 - r;
     const pc   = ((midi%12)+12)%12;
-    const isScale = scale.includes(pc);
-    const isRoot  = pc === (root%12);
-    ctx.fillStyle = isRoot ? '#1a1500' : isScale ? '#111108' : ([1,3,6,8,10].includes(pc) ? '#0a0a0a' : '#0e0e0e');
+    const isScale     = scale.includes(pc);
+    const isRoot      = pc === (root % 12);
+    const isChordTone = scaleChordPCs.includes(pc);
+    const isBlack     = [1,3,6,8,10].includes(pc);
+
+    // Row background — chord tones glow gold, scale notes slightly warm, others dark
+    if (isRoot) {
+      ctx.fillStyle = '#1f1800';
+    } else if (isChordTone) {
+      ctx.fillStyle = '#161200';
+    } else if (isScale) {
+      ctx.fillStyle = '#0f0f0a';
+    } else if (isBlack) {
+      ctx.fillStyle = '#080808';
+    } else {
+      ctx.fillStyle = '#0d0d0d';
+    }
     ctx.fillRect(0, r*rowH, canvas.width, rowH);
 
-    // Row line
-    ctx.strokeStyle = isRoot ? '#c9a84c33' : '#1a1a1a';
+    // Guide stripe on left edge for scale/chord tones
+    if (isRoot) {
+      ctx.fillStyle = '#c9a84c';
+      ctx.fillRect(0, r*rowH, 3, rowH);
+    } else if (isChordTone) {
+      ctx.fillStyle = '#c9a84c66';
+      ctx.fillRect(0, r*rowH, 2, rowH);
+    } else if (isScale) {
+      ctx.fillStyle = '#c9a84c22';
+      ctx.fillRect(0, r*rowH, 1, rowH);
+    }
+
+    // Row separator line
+    ctx.strokeStyle = isRoot ? '#c9a84c44' : isScale ? '#222210' : '#141414';
     ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(0,r*rowH); ctx.lineTo(canvas.width,r*rowH); ctx.stroke();
   }
@@ -595,23 +628,49 @@ function attachIdeaRollEvents() {
   _rollHandlers.mousedown = (e) => {
     try {
       e.preventDefault();
-      const {step, row} = getPos(e);
+      const {step, row, stepW, rowH} = getPos(e);
+      // Right-click = delete
       if (e.button === 2) {
         ideaRoll.notes = ideaRoll.notes.filter(n => !(n.row===row && step>=n.step && step<n.step+n.len));
         drawIdeaRoll(); return;
       }
       const snap = ideaRoll.snap;
       const snapped = Math.round(step / snap) * snap;
-      const existing = ideaRoll.notes.find(n => n.row===row && snapped>=n.step && snapped<n.step+n.len);
+      const existing = ideaRoll.notes.find(n => n.row===row && step>=n.step && step<n.step+n.len);
+
       if (existing) {
-        ideaRoll.resizing = existing;
-        ideaRoll.startStep = snapped;
+        // Click near right edge (last 25%) = resize; click body = move or delete
+        const noteRightEdge = (existing.step + existing.len) * stepW;
+        const noteLeftEdge  = existing.step * stepW;
+        const noteWidth     = existing.len * stepW;
+        // Get raw x pixel position
+        const rect = document.getElementById('idea-roll-canvas').getBoundingClientRect();
+        const scaleX = rect.width > 0 ? (document.getElementById('idea-roll-canvas').width / rect.width) : 1;
+        const rawX = (e.clientX - rect.left) * scaleX;
+        const posInNote = rawX - noteLeftEdge;
+        if (posInNote > noteWidth * 0.75) {
+          // Resize mode
+          ideaRoll.resizing = existing;
+          ideaRoll.startStep = snapped;
+        } else {
+          // Move mode — track offset within note
+          ideaRoll.moving = existing;
+          ideaRoll.moveOffsetStep = step - existing.step;
+          ideaRoll.moveOffsetRow  = row  - existing.row;
+          ideaRoll.startStep = snapped;
+          ideaRoll.startRow  = row;
+        }
       } else {
+        // Empty cell — draw new note. But if it's a second click on same cell, play note for feedback
         const newNote = { row, step: snapped, len: snap, vel: 100 };
         ideaRoll.notes.push(newNote);
         ideaRoll.activeNote = newNote;
         ideaRoll.drawing = true;
         ideaRoll.startStep = snapped;
+        // Audition the pitch
+        const root = ideaRoll.rootMidi;
+        const midi = root + 12 - row;
+        BF_Audio.playNote(midi, 'melody', 0.2).catch(()=>{});
       }
       drawIdeaRoll();
     } catch(err) { console.error('Roll mousedown error:', err); }
@@ -619,16 +678,23 @@ function attachIdeaRollEvents() {
 
   _rollHandlers.mousemove = (e) => {
     try {
-      if (!ideaRoll.drawing && !ideaRoll.resizing) return;
-      const {step} = getPos(e);
+      if (!ideaRoll.drawing && !ideaRoll.resizing && !ideaRoll.moving) return;
+      const {step, row} = getPos(e);
       const snap = ideaRoll.snap;
-      const snapped = Math.max(snap, Math.round(step/snap)*snap);
+      const snapped = Math.max(0, Math.round(step/snap)*snap);
       if (ideaRoll.drawing && ideaRoll.activeNote) {
-        ideaRoll.activeNote.len = Math.max(snap, snapped - ideaRoll.activeNote.step);
+        ideaRoll.activeNote.len = Math.max(snap, snapped - ideaRoll.activeNote.step + snap);
         drawIdeaRoll();
       }
       if (ideaRoll.resizing) {
-        ideaRoll.resizing.len = Math.max(snap, snapped - ideaRoll.resizing.step);
+        ideaRoll.resizing.len = Math.max(snap, snapped - ideaRoll.resizing.step + snap);
+        drawIdeaRoll();
+      }
+      if (ideaRoll.moving) {
+        const newStep = Math.max(0, snapped - Math.round(ideaRoll.moveOffsetStep/snap)*snap);
+        const newRow  = Math.max(0, Math.min(ideaRoll.rows-1, row - ideaRoll.moveOffsetRow));
+        ideaRoll.moving.step = newStep;
+        ideaRoll.moving.row  = newRow;
         drawIdeaRoll();
       }
     } catch(err) { console.error('Roll mousemove error:', err); }
@@ -637,6 +703,7 @@ function attachIdeaRollEvents() {
   _rollHandlers.mouseup = () => {
     ideaRoll.drawing  = false;
     ideaRoll.resizing = null;
+    ideaRoll.moving   = null;
     ideaRoll.activeNote = null;
     commitIdeaRollToState();
   };
@@ -691,7 +758,7 @@ function playIdeaRoll() {
     if (_irs) {
       _irs.textContent = '⚠ Draw some notes on the piano roll first, then hit Play.';
       _irs.style.color = '#C9A84C';
-      setTimeout(() => { _irs.style.color = ''; _irs.textContent = 'Click to place notes · Drag to resize · Right-click to delete'; }, 3000);
+      setTimeout(() => { _irs.style.color = ''; _irs.textContent = 'Click = add · Drag right edge = resize · Drag body = move · Right-click = delete'; }, 3000);
     }
     // Flash the canvas border
     const canvas = document.getElementById('idea-roll-canvas');
@@ -716,7 +783,7 @@ function playIdeaRoll() {
     () => {
       updateIdeaTransport(false);
       clearRollHighlight();
-      const _irs = document.getElementById('idea-roll-status'); if(_irs) _irs.textContent = 'Click to place notes · Drag to resize · Right-click to delete';
+      const _irs = document.getElementById('idea-roll-status'); if(_irs) _irs.textContent = 'Click = add · Drag right edge = resize · Drag body = move · Right-click = delete';
     }
   ).catch(err => console.warn('Audio play error:', err));
   } catch(err) { console.error('playIdeaRoll crash:', err); }
@@ -1097,33 +1164,38 @@ const BF_Audio = (() => {
   // ── Build all synth voices ──
   function buildSynths() {
     // ── Melody / Lead — supersaw detuned PolySynth with delay ──
-    const melDelay = new Tone.FeedbackDelay({ delayTime: '8n.', feedback: 0.35, wet: 0.22 }).toDestination();
-    const melFilter = new Tone.Filter({ frequency: 7000, type: 'lowpass', rolloff: -24 }).connect(melDelay);
-    melodySynth = new Tone.PolySynth(Tone.Synth, {
-      oscillator: { type: 'fatsawtooth', count: 3, spread: 20 },
-      envelope: { attack: 0.005, decay: 0.18, sustain: 0.65, release: 1.4 },
-      volume: -9,
-    }).connect(melFilter);
+    try {
+      const melDelay = new Tone.FeedbackDelay({ delayTime: '8n.', feedback: 0.35, wet: 0.22 }).toDestination();
+      const melFilter = new Tone.Filter({ frequency: 7000, type: 'lowpass', rolloff: -24 }).connect(melDelay);
+      melodySynth = new Tone.PolySynth(Tone.Synth, {
+        oscillator: { type: 'fatsawtooth', count: 3, spread: 20 },
+        envelope: { attack: 0.005, decay: 0.18, sustain: 0.65, release: 1.4 },
+        volume: -9,
+      }).connect(melFilter);
+    } catch(e) { console.error('[BF] melodySynth build failed:', e); }
 
     // ── Bass — sub+saw with drive and envelope filter ──
-    const bassFilter = new Tone.Filter({ frequency: 700, type: 'lowpass', rolloff: -24 }).toDestination();
-    const bassDist   = new Tone.Distortion({ distortion: 0.12, wet: 0.25 }).connect(bassFilter);
-    bassSynth = new Tone.MonoSynth({
-      oscillator: { type: 'fatsawtooth', count: 2, spread: 8 },
-      envelope: { attack: 0.005, decay: 0.12, sustain: 0.85, release: 0.3 },
-      filterEnvelope: { attack: 0.005, decay: 0.22, sustain: 0.45, release: 0.4, baseFrequency: 110, octaves: 2.5 },
-      volume: -4,
-    }).connect(bassDist);
+    try {
+      const bassFilter = new Tone.Filter({ frequency: 700, type: 'lowpass', rolloff: -24 }).toDestination();
+      const bassDist   = new Tone.Distortion({ distortion: 0.12, wet: 0.25 }).connect(bassFilter);
+      bassSynth = new Tone.MonoSynth({
+        oscillator: { type: 'fatsawtooth', count: 2, spread: 8 },
+        envelope: { attack: 0.005, decay: 0.12, sustain: 0.85, release: 0.3 },
+        filterEnvelope: { attack: 0.005, decay: 0.22, sustain: 0.45, release: 0.4, baseFrequency: 110, octaves: 2.5 },
+        volume: -4,
+      }).connect(bassDist);
+    } catch(e) { console.error('[BF] bassSynth build failed:', e); }
 
-    // ── Pad — wide detuned PolySynth with chorus ──
-    const padChorus = new Tone.Chorus({ frequency: 2.5, delayTime: 3.5, depth: 0.7, wet: 0.5 }).toDestination();
-    padChorus.start();
-    const padFilter = new Tone.Filter({ frequency: 4500, type: 'lowpass' }).connect(padChorus);
-    padSynth = new Tone.PolySynth(Tone.Synth, {
-      oscillator: { type: 'fatsawtooth', count: 2, spread: 28 },
-      envelope: { attack: 0.7, decay: 0.5, sustain: 0.85, release: 3.5 },
-      volume: -13,
-    }).connect(padFilter);
+    // ── Pad — wide detuned PolySynth with FeedbackDelay (Chorus can fail on some Electron builds) ──
+    try {
+      const padDelay = new Tone.FeedbackDelay({ delayTime: '4n', feedback: 0.4, wet: 0.35 }).toDestination();
+      const padFilter = new Tone.Filter({ frequency: 4500, type: 'lowpass' }).connect(padDelay);
+      padSynth = new Tone.PolySynth(Tone.Synth, {
+        oscillator: { type: 'fatsawtooth', count: 2, spread: 28 },
+        envelope: { attack: 0.7, decay: 0.5, sustain: 0.85, release: 3.5 },
+        volume: -13,
+      }).connect(padFilter);
+    } catch(e) { console.error('[BF] padSynth build failed:', e); }
 
     // ── Drums — synthetic percussion ──
     const masterVol = new Tone.Volume(-2).toDestination();
@@ -1205,14 +1277,20 @@ const BF_Audio = (() => {
 
   // ── Play a sequence of notes (idea roll / melody preview) ──
   async function playSequence(notes, bpm, role='melody', onStep, onStop) {
-    console.log('[BF_Audio] playSequence called, notes=', notes?.length, 'started=', started, 'melodySynth=', !!melodySynth);
-    await start();
-    console.log('[BF_Audio] after start(), started=', started, 'melodySynth=', !!melodySynth);
-    // Safety net: if synths still null, try building again
-    if (!melodySynth && started) {
-      console.warn('[BF_Audio] melodySynth null after start — rebuilding synths');
+    // Always resume AudioContext — Electron can suspend it between interactions
+    try {
+      if (Tone.context.state !== 'running') {
+        await Tone.start();
+        await Tone.context.rawContext?.resume();
+      }
+    } catch(e) { console.warn('[BF_Audio] context resume failed:', e); }
+
+    if (!started) {
+      try { await Tone.start(); started = true; buildSynths(); } catch(e) { console.error('[BF_Audio] start failed:', e); }
+    } else if (!melodySynth) {
       try { buildSynths(); } catch(e) { console.error('[BF_Audio] buildSynths retry failed:', e); }
     }
+
     stopAll();
 
     if (!notes || !notes.length) { console.log('[BF_Audio] no notes, returning'); return; }
@@ -1269,7 +1347,9 @@ const BF_Audio = (() => {
     const shouldLoop = (role === 'bass' || role === 'melody' || role === 'pad');
     if (shouldLoop) {
       playSeq.loop = true;
-      playSeq.loopEnd = maxStep + ' * 16n';
+      // loopEnd in seconds: maxStep 16th-notes at current BPM
+      const loopSec = maxStep * (60 / (bpm || 128)) / 4;
+      playSeq.loopEnd = loopSec;
     }
     try {
       playSeq.start(0);
