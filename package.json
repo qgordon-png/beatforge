@@ -1,5 +1,5 @@
 {
-  "name": "bff",
+  "name": "beatforge",
   "version": "0.5.0",
   "description": "BFF \u2014 Your Best Friend in Music Production",
   "main": "main.js",
@@ -40,7 +40,7 @@
     "publish": {
       "provider": "github",
       "owner": "qgordon-png",
-      "repo": "bff",
+      "repo": "beatforge",
       "releaseType": "release"
     },
     "artifactName": "${productName}-Setup-${version}.${ext}"
