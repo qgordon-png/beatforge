@@ -1124,6 +1124,58 @@ const BF_Audio = (() => {
       envelope: { attack: 0.7, decay: 0.5, sustain: 0.85, release: 3.5 },
       volume: -13,
     }).connect(padFilter);
+
+    // ── Drums — synthetic percussion ──
+    const masterVol = new Tone.Volume(-2).toDestination();
+
+    // Kick: sine click + low-freq thump
+    const kickEnv = new Tone.AmplitudeEnvelope({ attack:0.001, decay:0.35, sustain:0, release:0.1 }).connect(masterVol);
+    const kickOsc = new Tone.Oscillator({ type:'sine', frequency:55 }).connect(kickEnv);
+    const kickPitch = new Tone.FrequencyEnvelope({ attack:0.001, decay:0.08, sustain:0, release:0.1, baseFrequency:120, octaves:2 });
+    kickPitch.connect(kickOsc.frequency);
+    kickOsc.start();
+    kickEnv.start = () => {}; // managed below
+    drumSynths.kick = {
+      triggerAttackRelease: (note, dur, time) => {
+        try { kickPitch.triggerAttack(time || Tone.now()); kickEnv.triggerAttack(time || Tone.now()); kickEnv.triggerRelease((time || Tone.now()) + 0.3); } catch(e){}
+      }
+    };
+
+    // Snare: noise burst
+    const snareNoise = new Tone.NoiseSynth({
+      noise: { type:'white' },
+      envelope: { attack:0.001, decay:0.13, sustain:0, release:0.05 },
+      volume: -8,
+    }).connect(masterVol);
+    drumSynths.snare = { triggerAttackRelease: (dur, time) => { try { snareNoise.triggerAttackRelease(dur||'16n', time || Tone.now()); } catch(e){} } };
+
+    // Closed Hat: short noise
+    const chhNoise = new Tone.NoiseSynth({
+      noise: { type:'white' },
+      envelope: { attack:0.001, decay:0.04, sustain:0, release:0.01 },
+      volume: -14,
+    });
+    const chhFilter = new Tone.Filter({ frequency:8000, type:'highpass' }).connect(masterVol);
+    chhNoise.connect(chhFilter);
+    drumSynths.chh = { triggerAttackRelease: (dur, time) => { try { chhNoise.triggerAttackRelease('32n', time || Tone.now()); } catch(e){} } };
+
+    // Open Hat: longer noise
+    const ohhNoise = new Tone.NoiseSynth({
+      noise: { type:'white' },
+      envelope: { attack:0.001, decay:0.25, sustain:0.1, release:0.15 },
+      volume: -14,
+    });
+    const ohhFilter = new Tone.Filter({ frequency:7000, type:'highpass' }).connect(masterVol);
+    ohhNoise.connect(ohhFilter);
+    drumSynths.ohh = { triggerAttackRelease: (dur, time) => { try { ohhNoise.triggerAttackRelease(dur||'8n', time || Tone.now()); } catch(e){} } };
+
+    // Perc: metallic mid hit
+    const percSynth = new Tone.MetalSynth({
+      frequency:300, envelope:{attack:0.001,decay:0.12,release:0.05},
+      harmonicity:5.1, modulationIndex:32, resonance:4000, octaves:1.5,
+      volume: -16,
+    }).connect(masterVol);
+    drumSynths.perc = { triggerAttackRelease: (note, dur, time) => { try { percSynth.triggerAttackRelease(dur||'16n', time || Tone.now()); } catch(e){} } };
   }
 
   // ── Trigger single note (for piano roll click feedback) ──
@@ -1214,6 +1266,11 @@ const BF_Audio = (() => {
       currentStep = step;
     }, [...Array(maxStep+1).keys()], ticksPerStep);
 
+    const shouldLoop = (role === 'bass' || role === 'melody');
+    if (shouldLoop) {
+      playSeq.loop = true;
+      playSeq.loopEnd = maxStep + ' * 16n';
+    }
     try {
       playSeq.start(0);
       Tone.getTransport().start();
@@ -1225,31 +1282,28 @@ const BF_Audio = (() => {
     }
   }
 
-  // ── Play drum pattern (16 steps) ──
+  // ── Play drum pattern (looping) ──
   async function playDrumPattern(pattern, bpm, bars=1, onStep, onStop) {
     await start();
     stopAll();
     Tone.getTransport().bpm.value = bpm || 128;
+    Tone.getTransport().loop = false; // Sequence handles looping
 
-    const steps = bars * 16;
-    let step = 0;
+    // Build a 16-step repeating array
+    const stepArr = Array.from({length:16}, (_,i) => i);
 
     playSeq = new Tone.Sequence((time, i) => {
-      if (i >= steps) {
-        Tone.getTransport().stop();
-        isPlaying = false;
-        if (onStop) setTimeout(onStop, 100);
-        return;
-      }
-      if (pattern.kick?.[i])  drumSynths.kick.triggerAttackRelease('C1','8n',time);
-      if (pattern.snare?.[i]) drumSynths.snare.triggerAttackRelease('16n',time);
-      if (pattern.chh?.[i])   drumSynths.chh.triggerAttackRelease('32n',time);
-      if (pattern.ohh?.[i])   drumSynths.ohh.triggerAttackRelease('8n',time);
-      if (pattern.perc?.[i])  drumSynths.perc.triggerAttackRelease('G2','16n',time);
-      if (onStep) onStep(i);
-      step = i;
-    }, [...Array(steps+1).keys()], '16n');
+      const si = i % 16;
+      try { if (pattern.kick?.[si])  drumSynths.kick?.triggerAttackRelease('C1','8n',time); } catch(e){}
+      try { if (pattern.snare?.[si]) drumSynths.snare?.triggerAttackRelease('16n',time); } catch(e){}
+      try { if (pattern.chh?.[si])   drumSynths.chh?.triggerAttackRelease('32n',time); } catch(e){}
+      try { if (pattern.ohh?.[si])   drumSynths.ohh?.triggerAttackRelease('8n',time); } catch(e){}
+      try { if (pattern.perc?.[si])  drumSynths.perc?.triggerAttackRelease('G2','16n',time); } catch(e){}
+      if (onStep) onStep(si);
+    }, stepArr, '16n');
 
+    playSeq.loop = true;
+    playSeq.loopEnd = '1m';
     playSeq.start(0);
     Tone.getTransport().start();
     isPlaying = true;
@@ -1371,6 +1425,7 @@ function updateState(field, value) {
     case 'density':     state.scene.density     = value; break;
     case 'drum-style':  state.drums.style       = value; break;
     case 'bass-style':  state.bass.style        = value; break;
+    case 'melody-phrase': state.melody.phraseLen = parseInt(value) || 16; break;
     case 'melody-style':state.melody.style      = value; break;
     case 'pad-style':   state.pads.style        = value; break;
     case 'fx-elements': state.pads.fx           = value; break;
@@ -1921,72 +1976,103 @@ async function aiGenerateBass() {
   }, 600);
 }
 
+// Dance music chord progressions (scale degree indices, minor scale)
+const CHORD_PROGRESSIONS = {
+  'euphoric':    [[0,2,4],[5,0,2],[3,5,0],[4,6,1]],   // i – VI – iv – VII
+  'dark':        [[0,2,4],[6,1,3],[5,0,2],[4,6,1]],   // i – vii° – VI – VII
+  'hypnotic':    [[0,2,4],[0,2,4],[5,0,2],[5,0,2]],   // i i VI VI (dorian loop)
+  'melancholic': [[0,2,4],[3,5,0],[5,0,2],[4,6,1]],   // i – iv – VI – VII
+  'tribal':      [[0,4],[0,4],[5,2],[5,2]],             // power chords
+};
+
 async function aiGenerateMelody() {
-  addMessage('bot', "Composing a melody that fits around everything... <em>Oh for— this is going to be good.</em>");
-  
-  const key = state.scene.key;
-  const scale = getScale(key);
-  const root = getNoteNumber(key);
-  const complexity = state.melody.complexity;
-  const density = state.melody.density;
-  
+  const phraseChoice = state.melody.phraseLen || 16; // 8, 16, or 32 steps
+  const style        = state.melody.style || 'lead';
+  const key          = state.scene.key;
+  const scale        = getScale(key);
+  const root         = getNoteNumber(key);
+  const atmo         = state.scene.atmosphere || 'euphoric';
+
+  addMessage('bot', `Composing ${phraseChoice}-step ${style} in ${key}... <em>Oh for— this is going to be good.</em>`);
+
+  // Pick chord progression
+  const progKey = Object.keys(CHORD_PROGRESSIONS).find(k => atmo.includes(k)) || 'euphoric';
+  const chordProg = CHORD_PROGRESSIONS[progKey];
+  const chordLen  = Math.floor(phraseChoice / chordProg.length); // steps per chord
+
+  // Scale degrees for melody (upper octave)
+  const octaveUp  = scale.map(n => n + 12);
+  const allNotes  = [...scale, ...octaveUp];
+
   let notes = [];
-  const octaveUp = scale.map(n => n + 12);
-  const allNotes = [...scale, ...octaveUp];
-  
-  const style = state.melody.style;
-  
+
   if (style === 'arp') {
-    // Arpeggiated — cycling through scale tones
-    const pattern = [0, 2, 4, 2, 0, 3, 4, 3]; // Scale degree pattern
-    for (let i = 0; i < 16; i++) {
-      if (i % Math.max(1, 4 - Math.floor(density/3)) === 0) {
-        const deg = pattern[i % pattern.length];
-        notes.push({
-          note: allNotes[deg % allNotes.length],
-          time: i,
-          duration: Math.max(1, 3 - Math.floor(density/4)),
-          velocity: 80 + Math.random() * 30
-        });
-      }
-    }
-  } else if (style === 'lead') {
-    // Lead line — longer notes, more melodic
-    let pos = 0;
-    let prevDeg = 0;
-    while (pos < 16) {
-      const dur = 2 + Math.floor(Math.random() * 3);
-      const deg = prevDeg + Math.floor(Math.random() * 3) - 1;
-      const clampedDeg = Math.max(0, Math.min(allNotes.length - 1, deg));
-      notes.push({
-        note: allNotes[clampedDeg],
-        time: pos,
-        duration: dur,
-        velocity: 85 + Math.random() * 25
-      });
-      prevDeg = clampedDeg;
-      pos += dur + (density < 5 ? 1 : 0);
-    }
-  } else {
-    // Stab / pluck / vocal chop — rhythmic hits
-    [0, 3, 6, 8, 11, 14].forEach(t => {
-      if (Math.random() < density * 0.12) {
-        const deg = Math.floor(Math.random() * 5);
-        notes.push({
-          note: allNotes[deg],
-          time: t,
-          duration: 1,
-          velocity: 90 + Math.random() * 20
-        });
+    // Arpeggiated — per-chord arp pattern that evolves each chord
+    const arpPatterns = [
+      [0,2,4,2],      // up
+      [4,2,0,2],      // down
+      [0,4,2,4],      // pivot
+      [2,0,4,2],      // offset
+    ];
+    chordProg.forEach((chord, ci) => {
+      const startStep = ci * chordLen;
+      const pat = arpPatterns[ci % arpPatterns.length];
+      const stepSize = Math.max(1, Math.floor(chordLen / (pat.length * 2)));
+      let pos = startStep;
+      while (pos < startStep + chordLen && pos < phraseChoice) {
+        const deg  = chord[pat[(pos - startStep) % pat.length] % chord.length];
+        const midi = allNotes[Math.min(deg + 7, allNotes.length - 1)]; // upper octave arp
+        notes.push({ note: midi, time: pos, duration: stepSize, velocity: 75 + (pos % 4 === 0 ? 20 : 5) });
+        pos += stepSize;
       }
     });
+
+  } else if (style === 'lead') {
+    // Lead line — one phrase per chord, stepwise motion, peak on 3rd chord
+    let prevDeg = 0;
+    chordProg.forEach((chord, ci) => {
+      const startStep = ci * chordLen;
+      const numNotes  = 2 + ci; // grows: 2, 3, 4, 5
+      const noteSlots = Array.from({length:numNotes}, (_,i) => startStep + Math.round(i * chordLen / numNotes));
+      noteSlots.forEach((t, ni) => {
+        // Step toward a chord tone from previous note
+        const target   = chord[ni % chord.length];
+        const deg      = Math.round(prevDeg * 0.5 + target * 0.5 + (Math.random()-0.5));
+        const clamped  = Math.max(0, Math.min(allNotes.length - 1, deg));
+        const dur      = ni === numNotes - 1 ? Math.max(2, chordLen - noteSlots[ni] + startStep) : Math.max(1, noteSlots[ni+1] - t - 1);
+        notes.push({ note: allNotes[clamped], time: t, duration: dur, velocity: 80 + (ni === 0 ? 20 : 5) });
+        prevDeg = clamped;
+      });
+    });
+
+  } else {
+    // Stab / chop — rhythmic hits that follow chord changes
+    chordProg.forEach((chord, ci) => {
+      const startStep = ci * chordLen;
+      const stabSlots = [0, 3, 5, 8, 10, 12, 14].filter(s => s < chordLen);
+      stabSlots.forEach(offset => {
+        if (Math.random() < 0.65) {
+          const deg = chord[Math.floor(Math.random() * chord.length)];
+          notes.push({ note: allNotes[Math.min(deg+7, allNotes.length-1)], time: startStep + offset, duration: 1, velocity: 88 + Math.floor(Math.random()*22) });
+        }
+      });
+    });
   }
-  
+
+  // Sort by time
+  notes.sort((a,b) => a.time - b.time);
+
   state.melody.notes = notes;
+  state.melody.phraseLen = phraseChoice;
   renderPianoRoll('melody-pianoroll', notes, root, root + 24);
-  
+
+  const progStr = chordProg.map((c,i) => {
+    const names = ['i','ii°','III','iv','v','VI','VII'];
+    return names[c[0]] || `${c[0]}`;
+  }).join(' → ');
+
   setTimeout(() => {
-    addMessage('bot', `${style} melody in ${key}. ${notes.length} notes, designed to sit above your bass without clashing. <em>That's a hook right there.</em>`);
+    addMessage('bot', `${style} in <strong>${key}</strong> over <strong>${phraseChoice} steps</strong> (${chordProg.length} chords: ${progStr}).<br>Each chord section evolves the melody — arp builds complexity, lead peaks on chord 3, stabs follow the harmony.<br><em>Click on the grid to add notes. Right-click to delete. That's a real composition right there.</em>`);
   }, 600);
 }
 
@@ -2019,24 +2105,126 @@ async function aiGeneratePads() {
 function renderPianoRoll(containerId, notes, minNote, maxNote) {
   const container = document.getElementById(containerId);
   container.innerHTML = '';
-  
+
+  const role = containerId.includes('bass') ? 'bass' : containerId.includes('pad') ? 'pad' : 'melody';
   const range = maxNote - minNote;
-  const width = container.clientWidth || 600;
-  const height = container.clientHeight || 180;
-  const totalSteps = 16;
-  
-  notes.forEach(n => {
-    const el = document.createElement('div');
-    el.className = 'pr-note';
-    const x = (n.time / totalSteps) * width;
-    const w = (n.duration / totalSteps) * width;
-    const y = height - ((n.note - minNote) / range) * height;
-    el.style.left = x + 'px';
-    el.style.width = Math.max(4, w) + 'px';
-    el.style.top = Math.max(0, Math.min(height - 10, y)) + 'px';
-    el.style.opacity = (n.velocity || 100) / 127;
-    container.appendChild(el);
+  const totalSteps = 32; // 2 bars of 16ths
+  const cellW = Math.max(18, Math.floor((container.clientWidth || 600) / totalSteps));
+  const rows  = range + 1;
+  const cellH = Math.max(10, Math.floor((container.clientHeight || 200) / rows));
+  const gridW = cellW * totalSteps;
+  const gridH = cellH * rows;
+
+  container.style.position = 'relative';
+  container.style.overflow = 'auto';
+  container.style.cursor   = 'crosshair';
+
+  // Draw grid background via canvas
+  const canvas = document.createElement('canvas');
+  canvas.width  = gridW;
+  canvas.height = gridH;
+  canvas.style.position = 'absolute';
+  canvas.style.top = '0'; canvas.style.left = '0';
+  canvas.style.pointerEvents = 'none';
+  container.appendChild(canvas);
+
+  const ctx = canvas.getContext('2d');
+  for (let r = 0; r < rows; r++) {
+    const noteNum = maxNote - r;
+    const isBlack = [1,3,6,8,10].includes(noteNum % 12);
+    ctx.fillStyle = isBlack ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.03)';
+    ctx.fillRect(0, r * cellH, gridW, cellH);
+  }
+  // Beat lines
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+  ctx.lineWidth = 1;
+  for (let s = 0; s <= totalSteps; s++) {
+    ctx.globalAlpha = (s % 4 === 0) ? 0.4 : 0.12;
+    ctx.beginPath(); ctx.moveTo(s*cellW, 0); ctx.lineTo(s*cellW, gridH); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  // Note state (mutable copy)
+  let noteArr = notes.map(n => ({...n}));
+
+  function noteToRow(midiNote) { return maxNote - midiNote; }
+  function rowToMidi(row)      { return maxNote - row; }
+  function timeToCol(time)     { return Math.round(time); }
+  function colToTime(col)      { return col; }
+
+  function redrawNotes() {
+    // Remove old note divs
+    container.querySelectorAll('.pr-note').forEach(e => e.remove());
+    noteArr.forEach((n, idx) => {
+      const col = timeToCol(n.time);
+      const row = noteToRow(n.note);
+      if (row < 0 || row >= rows) return;
+      const el = document.createElement('div');
+      el.className = 'pr-note';
+      el.style.position = 'absolute';
+      el.style.left   = (col * cellW) + 'px';
+      el.style.top    = (row * cellH + 1) + 'px';
+      el.style.width  = Math.max(cellW - 1, (n.duration || 2) * cellW - 1) + 'px';
+      el.style.height = (cellH - 2) + 'px';
+      el.style.opacity = (n.velocity || 100) / 127;
+      el.dataset.idx  = idx;
+      // Right-click to delete
+      el.addEventListener('contextmenu', e => {
+        e.preventDefault(); e.stopPropagation();
+        noteArr.splice(idx, 1);
+        syncBack();
+        redrawNotes();
+      });
+      container.appendChild(el);
+    });
+  }
+
+  function syncBack() {
+    if (role === 'bass')   state.bass.notes   = noteArr.map(n => ({...n}));
+    else if (role === 'pad') state.pads.notes = noteArr.map(n => ({...n}));
+    else                   state.melody.notes = noteArr.map(n => ({...n}));
+  }
+
+  // Click on grid to add note
+  let painting = false;
+  let paintNote = null;
+  let paintStartCol = 0;
+
+  container.addEventListener('mousedown', e => {
+    if (e.target.classList.contains('pr-note')) return;
+    e.preventDefault();
+    const rect = container.getBoundingClientRect();
+    const x = e.clientX - rect.left + container.scrollLeft;
+    const y = e.clientY - rect.top  + container.scrollTop;
+    const col  = Math.floor(x / cellW);
+    const row  = Math.floor(y / cellH);
+    const midi = rowToMidi(row);
+    if (midi < minNote || midi > maxNote) return;
+    painting = true;
+    paintStartCol = col;
+    paintNote = { note: midi, time: colToTime(col), duration: 1, velocity: 100 };
+    noteArr.push(paintNote);
+    BF_Audio.playNote(midi, role, 0.15).catch(()=>{});
+    redrawNotes();
   });
+
+  container.addEventListener('mousemove', e => {
+    if (!painting || !paintNote) return;
+    const rect = container.getBoundingClientRect();
+    const x = e.clientX - rect.left + container.scrollLeft;
+    const col = Math.floor(x / cellW);
+    paintNote.duration = Math.max(1, col - paintStartCol + 1);
+    redrawNotes();
+  });
+
+  const endPaint = () => {
+    if (painting) { syncBack(); }
+    painting = false; paintNote = null;
+  };
+  container.addEventListener('mouseup',    endPaint);
+  container.addEventListener('mouseleave', endPaint);
+
+  redrawNotes();
 }
 
 // ─── MUSIC THEORY HELPERS ───

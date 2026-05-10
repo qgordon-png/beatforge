@@ -339,9 +339,21 @@ html, body { height:100%; background:var(--bg); color:var(--text); font-family:'
   font-size:14px; color:var(--dim); font-style:italic;
 }
 .pr-note {
-  position:absolute; height:8px; border-radius:2px;
-  background:var(--gold); opacity:0.8;
-  transition:all 0.1s;
+  position:absolute; border-radius:2px;
+  background:var(--gold); opacity:0.85;
+  border: 1px solid rgba(255,255,255,0.3);
+  cursor:pointer; z-index:2;
+  transition:opacity 0.1s;
+  min-height:8px;
+}
+.pr-note:hover { opacity:1; filter: brightness(1.2); }
+/* Piano roll container needs overflow for large grids */
+[id$="-pianoroll"] {
+  position:relative;
+  overflow:auto;
+  cursor:crosshair;
+  border-radius:6px;
+  background: rgba(0,0,0,0.4);
 }
 .pr-note:hover { opacity:1; transform:scaleY(1.3); }
 /* Grid lines */
