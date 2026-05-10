@@ -458,7 +458,12 @@ function initIdeaScreen() {
     drawIdeaRoll();
   });
   document.getElementById('idea-play-btn')?.addEventListener('click', () => {
-    playIdeaRoll();
+    // Eagerly resume AudioContext on the user gesture (Electron requirement)
+    if (typeof Tone !== 'undefined') {
+      Tone.start().then(() => playIdeaRoll()).catch(() => playIdeaRoll());
+    } else {
+      playIdeaRoll();
+    }
   });
   document.getElementById('idea-roll-suggest')?.addEventListener('click', suggestIdeaPhrase);
   document.getElementById('idea-roll-quant')?.addEventListener('click', quantiseIdeaRoll);
@@ -658,6 +663,7 @@ function commitIdeaRollToState() {
 
 // ── Idea Roll Transport ──
 function playIdeaRoll() {
+  try {
   const role  = state.idea?.role || 'melody';
   const bpm   = parseInt(document.getElementById('bpm-val')?.value) || 128;
   const key   = document.getElementById('idea-roll-key')?.value || 'Am';
@@ -692,6 +698,7 @@ function playIdeaRoll() {
       const _irs = document.getElementById('idea-roll-status'); if(_irs) _irs.textContent = 'Click to place notes · Drag to resize · Right-click to delete';
     }
   ).catch(err => console.warn('Audio play error:', err));
+  } catch(err) { console.error('playIdeaRoll crash:', err); }
 }
 
 function updateIdeaTransport(playing) {
@@ -1040,7 +1047,11 @@ const BF_Audio = (() => {
   // ── Ensure AudioContext is started (needs user gesture) ──
   async function start() {
     if (started) return;
-    await Tone.start();
+    try {
+      await Tone.start();
+    } catch(e) {
+      console.warn('Tone.start() error (may already be running):', e);
+    }
     started = true;
     buildSynths();
   }
