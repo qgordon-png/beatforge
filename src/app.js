@@ -1055,14 +1055,17 @@ const BF_Audio = (() => {
 
   // ── Ensure AudioContext is started (needs user gesture) ──
   async function start() {
+    console.log('[BF_Audio] start() called, started=', started, 'Tone.context.state=', Tone?.context?.state);
     if (started) return;
     try {
+      console.log('[BF_Audio] calling Tone.start()...');
       await Tone.start();
+      console.log('[BF_Audio] Tone.start() succeeded, context state=', Tone.context.state);
       started = true;
       buildSynths();
+      console.log('[BF_Audio] buildSynths() complete');
     } catch(e) {
-      console.error('Tone.start() failed — audio unavailable:', e);
-      // Don't set started=true so we retry on next gesture
+      console.error('[BF_Audio] Tone.start() FAILED:', e);
     }
   }
 
@@ -1157,10 +1160,12 @@ const BF_Audio = (() => {
 
   // ── Play a sequence of notes (idea roll / melody preview) ──
   async function playSequence(notes, bpm, role='melody', onStep, onStop) {
+    console.log('[BF_Audio] playSequence called, notes=', notes?.length, 'started=', started, 'melodySynth=', !!melodySynth);
     await start();
+    console.log('[BF_Audio] after start(), started=', started, 'melodySynth=', !!melodySynth);
     stopAll();
 
-    if (!notes || !notes.length) return;
+    if (!notes || !notes.length) { console.log('[BF_Audio] no notes, returning'); return; }
 
     Tone.getTransport().bpm.value = bpm || 128;
 
@@ -1260,14 +1265,16 @@ const BF_Audio = (() => {
 document.addEventListener('DOMContentLoaded', () => {
   // Version label — do this first, independently of updater UI
   (function() {
+    console.log('[BF] DOMContentLoaded, window.beatforge=', !!window.beatforge, 'getVersion=', !!window.beatforge?.app?.getVersion);
     const vl = document.getElementById('tb-version-label');
+    console.log('[BF] tb-version-label element=', !!vl);
     if (!vl) return;
-    const fn = window.beatforge?.app?.getVersion || window.electronAPI?.getVersion;
+    const fn = window.beatforge?.app?.getVersion;
     if (fn) {
-      fn().then(v => { vl.textContent = 'v' + v; }).catch(()=>{ vl.textContent = ''; });
+      fn().then(v => { console.log('[BF] version from IPC=', v); vl.textContent = 'v' + v; }).catch(e=>{ console.error('[BF] getVersion error:', e); vl.textContent = 'v0.3.9'; });
     } else {
-      // Fallback: read from package.json version embedded at build time
-      vl.textContent = 'v0.3.7';
+      console.warn('[BF] no getVersion fn, using fallback');
+      vl.textContent = 'v0.3.9';
     }
   })();
   initChips();
