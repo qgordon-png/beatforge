@@ -1266,7 +1266,7 @@ const BF_Audio = (() => {
       currentStep = step;
     }, [...Array(maxStep+1).keys()], ticksPerStep);
 
-    const shouldLoop = (role === 'bass' || role === 'melody');
+    const shouldLoop = (role === 'bass' || role === 'melody' || role === 'pad');
     if (shouldLoop) {
       playSeq.loop = true;
       playSeq.loopEnd = maxStep + ' * 16n';
@@ -1741,6 +1741,7 @@ function initPanelButtons() {
   document.getElementById('drum-preview')?.addEventListener('click', () => previewDrums());
   document.getElementById('bass-preview')?.addEventListener('click', () => previewBass());
   document.getElementById('melody-preview')?.addEventListener('click', () => previewMelody());
+  document.getElementById('pads-preview')?.addEventListener('click',  () => previewPads());
 }
 
 // ─── AI CHAT ───
@@ -2077,22 +2078,34 @@ async function aiGenerateMelody() {
 }
 
 async function aiGeneratePads() {
-  addMessage('bot', "Building the atmosphere...");
-  
-  const key = state.scene.key;
+  addMessage('bot', "Building the atmosphere... <em>This is where the emotion lives.</em>");
+
+  const key   = state.scene.key;
   const scale = getScale(key);
-  const root = getNoteNumber(key);
-  
-  // Pads are sustained chords
-  const notes = [
-    { note: scale[0] + 12, time: 0, duration: 8, velocity: 60 },
-    { note: scale[2] + 12, time: 0, duration: 8, velocity: 55 },
-    { note: scale[4] + 12, time: 0, duration: 8, velocity: 55 },
-    { note: scale[0] + 12, time: 8, duration: 8, velocity: 60 },
-    { note: scale[3] + 12, time: 8, duration: 8, velocity: 55 },
-    { note: scale[4] + 12, time: 8, duration: 8, velocity: 50 },
-  ];
-  
+  const root  = getNoteNumber(key);
+  const atmo  = state.scene.atmosphere || 'euphoric';
+
+  // Use same chord progression logic as melody
+  const progKey  = Object.keys(CHORD_PROGRESSIONS).find(k => atmo.includes(k)) || 'euphoric';
+  const chordProg = CHORD_PROGRESSIONS[progKey];
+  const totalSteps = 32;
+  const chordLen   = Math.floor(totalSteps / chordProg.length);
+
+  const notes = [];
+  chordProg.forEach((chord, ci) => {
+    const startStep = ci * chordLen;
+    // Build a 3-note chord voicing (root, 3rd, 5th) one octave up
+    chord.forEach((deg, vi) => {
+      const midi = scale[deg % scale.length] + 12;
+      notes.push({
+        note: midi,
+        time: startStep,
+        duration: chordLen,
+        velocity: vi === 0 ? 65 : 55, // root slightly louder
+      });
+    });
+  });
+
   state.pads.notes = notes;
   renderPianoRoll('pads-pianoroll', notes, root + 6, root + 30);
   
@@ -2310,6 +2323,25 @@ async function previewMelody() {
     state.melody.notes,
     state.scene.bpm || 128,
     'melody',
+    null,
+    () => { if (btn) btn.textContent = '▶ Preview'; }
+  );
+}
+
+async function previewPads() {
+  const btn = document.getElementById('pads-preview');
+  if (BF_Audio.getIsPlaying()) {
+    BF_Audio.stopAll();
+    if (btn) btn.textContent = '▶ Preview'; return;
+  }
+  if (!state.pads.notes.length) {
+    addMessage('bot', "Generate pads first — nothing to preview yet."); return;
+  }
+  if (btn) btn.textContent = '⏹ Stop';
+  await BF_Audio.playSequence(
+    state.pads.notes,
+    state.scene.bpm || 128,
+    'pad',
     null,
     () => { if (btn) btn.textContent = '▶ Preview'; }
   );
