@@ -457,7 +457,10 @@ function initIdeaScreen() {
     ideaRoll.notes = [];
     drawIdeaRoll();
   });
-  document.getElementById('idea-play-btn')?.addEventListener('click', () => {
+  document.getElementById('idea-play-btn')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    console.log('[BF] Play idea clicked, ideaRoll.notes=', ideaRoll.notes.length);
     // Eagerly resume AudioContext on the user gesture (Electron requirement)
     if (typeof Tone !== 'undefined') {
       Tone.start().then(() => playIdeaRoll()).catch(() => playIdeaRoll());
@@ -677,7 +680,29 @@ function playIdeaRoll() {
   }));
 
   if (!notes.length) {
-    const _irs = document.getElementById('idea-roll-status'); if(_irs) _irs.textContent = 'Draw some notes first, then hit Play.';
+    // Switch to Draw tab if not already there
+    const drawPane = document.getElementById('idea-pane-draw');
+    const drawBtn = document.querySelector('.idea-mode-btn[data-mode="draw"]');
+    if (drawPane && drawPane.classList.contains('hidden')) {
+      document.querySelectorAll('.idea-mode-btn').forEach(b => b.classList.remove('active'));
+      if (drawBtn) drawBtn.classList.add('active');
+      document.getElementById('idea-pane-describe')?.classList.add('hidden');
+      drawPane.classList.remove('hidden');
+      initIdeaRoll();
+    }
+    // Flash the status
+    const _irs = document.getElementById('idea-roll-status');
+    if (_irs) {
+      _irs.textContent = '⚠ Draw some notes on the piano roll first, then hit Play.';
+      _irs.style.color = '#C9A84C';
+      setTimeout(() => { _irs.style.color = ''; _irs.textContent = 'Click to place notes · Drag to resize · Right-click to delete'; }, 3000);
+    }
+    // Flash the canvas border
+    const canvas = document.getElementById('idea-roll-canvas');
+    if (canvas) {
+      canvas.style.boxShadow = '0 0 0 2px #C9A84C';
+      setTimeout(() => { canvas.style.boxShadow = ''; }, 1500);
+    }
     return;
   }
 
