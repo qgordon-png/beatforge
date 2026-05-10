@@ -52,17 +52,66 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      sandbox: false
     },
     icon: path.join(__dirname, 'assets', 'icon.png')
   });
 
   mainWindow.loadFile('src/index.html');
 
+  // Catch renderer crash — reload instead of black screen
+  mainWindow.webContents.on('render-process-gone', (event, details) => {
+    console.error('Renderer process gone:', details.reason, details.exitCode);
+    // Reload after short delay
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.reload();
+      }
+    }, 500);
+  });
+
+  mainWindow.on('unresponsive', () => {
+    console.warn('Window unresponsive — forcing reload');
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.reload();
+    }, 2000);
+  });
+
+  // Catch renderer crash — reload instead of black screen
+  mainWindow.webContents.on('render-process-gone', (event, details) => {
+    console.error('Renderer process gone:', details.reason, details.exitCode);
+    // Reload after short delay
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.reload();
+      }
+    }, 500);
+  });
+
+  mainWindow.on('unresponsive', () => {
+    console.warn('Window unresponsive — forcing reload');
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.reload();
+    }, 2000);
+  });
+
   if (process.argv.includes('--dev')) {
     mainWindow.webContents.openDevTools();
   }
 }
+
+// Prevent GPU process from killing renderer on audio context crash
+app.commandLine.appendSwitch('disable-gpu');
+app.commandLine.appendSwitch('no-sandbox');
+app.commandLine.appendSwitch('disable-web-security');
+app.commandLine.appendSwitch('allow-file-access-from-files');
+
+// Prevent GPU process from killing renderer on audio context crash
+app.commandLine.appendSwitch('disable-gpu');
+app.commandLine.appendSwitch('no-sandbox');
+app.commandLine.appendSwitch('disable-web-security');
+app.commandLine.appendSwitch('allow-file-access-from-files');
 
 app.whenReady().then(() => {
   createWindow();
