@@ -42,6 +42,10 @@ const LAYERS = [
 
 // Section definitions based on track length
 function getSections(length) {
+  // If description interpreter set custom sections, use those
+  if (state.scene && state.scene._customSections && state.scene._customSections.length) {
+    return state.scene._customSections;
+  }
   // Accept '6', '6min', or numeric
   const mins = parseFloat(String(length).replace('min','')) || 6;
   if (mins <= 4)  return ['Intro','Build','Drop','Breakdown','Drop 2','Outro'];
@@ -472,6 +476,9 @@ function initIdeaScreen() {
   document.getElementById('idea-roll-quant')?.addEventListener('click', quantiseIdeaRoll);
 
   // Build button
+  // Entry screen
+  initEntryScreen();
+  // Legacy build btn (kept for compatibility)
   document.getElementById('idea-build-btn')?.addEventListener('click', buildTrackFromIdea);
 
   // Blueprint strip live update
@@ -480,6 +487,54 @@ function initIdeaScreen() {
 }
 
 // ── Piano Roll Renderer ──
+
+// Stub: bass roll uses same engine, just different canvas
+function initIdeaRollOnCanvas(canvas, keysEl, role, rollState) {
+  // Delegate to main idea roll init — bass roll shares the same canvas logic
+  // In a future version this creates a fully independent piano roll instance
+  // For now, initialise the main roll if canvas is the melody one, otherwise basic grid
+  if (canvas && canvas.id === 'idea-roll-canvas') { initIdeaRoll(); return; }
+  // Bass roll: 2-octave range centred on bass register (MIDI 36-60)
+  if (!canvas) return;
+  const W = canvas.parentElement?.clientWidth || 500;
+  const ROWS = 24; const ROW_H = 18;
+  canvas.width  = W; canvas.height = ROWS * ROW_H;
+  const ctx = canvas.getContext('2d');
+  const bassNotes = [];
+  for (let r = 0; r < ROWS; r++) {
+    const midi = 60 - r;
+    const isBlack = [1,3,6,8,10].includes(midi % 12);
+    ctx.fillStyle = isBlack ? '#0a0a0a' : '#111';
+    ctx.fillRect(0, r*ROW_H, W, ROW_H-1);
+  }
+  // Simple click-to-add for bass roll
+  canvas.addEventListener('mousedown', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const row  = Math.floor((e.clientY - rect.top) / ROW_H);
+    const step = Math.floor(((e.clientX - rect.left) / W) * 32);
+    const midi = 60 - row;
+    rollState.notes.push({ step, len: 2, note: midi, vel: 90 });
+    ctx.fillStyle = 'rgba(201,168,76,0.85)';
+    ctx.fillRect(step*(W/32), row*ROW_H+1, (W/32)*2-2, ROW_H-3);
+    // Play note
+    playPreviewNote(midi, 'bass');
+  });
+  if (keysEl) {
+    keysEl.innerHTML = '';
+    for (let r = 0; r < ROWS; r++) {
+      const midi = 60 - r;
+      const names = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+      const name  = names[midi % 12];
+      const isBlack = [1,3,6,8,10].includes(midi % 12);
+      const div = document.createElement('div');
+      div.className = `ir-key ${isBlack ? 'ir-key-black' : 'ir-key-white'}`;
+      div.textContent = name + Math.floor(midi/12-1);
+      div.style.height = ROW_H + 'px';
+      keysEl.appendChild(div);
+    }
+  }
+}
+
 function initIdeaRoll() {
   const key      = document.getElementById('idea-roll-key')?.value || 'Am';
   const root     = KEY_ROOTS[key] || 69;
@@ -668,6 +723,8 @@ function attachIdeaRollEvents() {
         ideaRoll.activeNote = newNote;
         ideaRoll.drawing = true;
         ideaRoll.startStep = snapped;
+        // 🎵 Play note on placement — makes the grid feel alive
+        playPreviewNote(newNote.note, state.idea.role || 'melody');
         // Audition the pitch
         const root = ideaRoll.rootMidi;
         const midi = root + 12 - row;
@@ -994,6 +1051,324 @@ function updateIdeaBlueprintStrip() {
 }
 
 // ── BUILD TRACK FROM IDEA ──
+
+// ══════════════════════════════════════════════════════════════════
+// BFF ENTRY SCREEN — Dynamic Starting Point
+// ══════════════════════════════════════════════════════════════════
+
+function showEntryScreen() {
+  document.getElementById('bff-entry-screen').classList.remove('hidden');
+  ['describe','beat','melody','bass'].forEach(f => {
+    const el = document.getElementById(`bff-flow-${f}`);
+    if (el) el.classList.add('hidden');
+  });
+}
+
+function showFlow(name) {
+  document.getElementById('bff-entry-screen').classList.add('hidden');
+  ['describe','beat','melody','bass'].forEach(f => {
+    const el = document.getElementById(`bff-flow-${f}`);
+    if (el) el.classList.add('hidden');
+  });
+  const target = document.getElementById(`bff-flow-${name}`);
+  if (target) {
+    target.classList.remove('hidden');
+    if (name === 'melody') initIdeaRoll();
+    if (name === 'bass')   initBassRoll();
+  }
+}
+
+function initEntryScreen() {
+  // Entry card clicks
+  document.querySelectorAll('.bff-entry-card').forEach(card => {
+    card.addEventListener('click', () => showFlow(card.dataset.entry));
+  });
+
+  // Beat option selection
+  document.querySelectorAll('.bff-beat-option').forEach(opt => {
+    opt.addEventListener('click', () => {
+      document.querySelectorAll('.bff-beat-option').forEach(o => o.classList.remove('active'));
+      opt.classList.add('active');
+      state.scene.groovePreset = opt.dataset.groove;
+    });
+  });
+
+  // Beat build
+  document.getElementById('beat-entry-build')?.addEventListener('click', () => {
+    const groove = document.querySelector('.bff-beat-option.active')?.dataset.groove || 'four-on-floor';
+    applyGroovePreset(groove);
+    addMessage('bot', `🥁 Starting with a <strong>${groove.replace(/-/g,' ')}</strong> groove. I'll build the full arrangement around your beat — let's dial in the drums first.`);
+    setTimeout(() => goToStep('scene'), 200);
+    setTimeout(() => goToStep('drums'), 400);
+  });
+
+  // Describe: parse button
+  document.getElementById('bff-parse-btn')?.addEventListener('click', interpretDescription);
+
+  // Describe: re-parse
+  document.getElementById('bir-reparse')?.addEventListener('click', interpretDescription);
+
+  // Describe: build
+  document.getElementById('bir-build')?.addEventListener('click', () => {
+    applyInterpretedSections();
+    addMessage('bot', `💬 Section skeleton locked. I've pre-filled the Section Designer based on your description — tweak any section then build. <em>Your words just became a track structure.</em>`);
+    setTimeout(() => goToStep('scene'), 200);
+    setTimeout(() => goToStep('arrangement'), 500);
+  });
+
+  // Melody build
+  document.getElementById('melody-entry-build')?.addEventListener('click', () => {
+    state.idea.role = document.querySelector('.idea-role-btn.active')?.dataset.role || 'melody';
+    addMessage('bot', `🎹 Melody locked in — ${ideaRoll.notes.length} notes as your <strong>${state.idea.role}</strong>. Building arrangement around your phrase.`);
+    setTimeout(() => goToStep('scene'), 200);
+    setTimeout(() => goToStep('arrangement'), 500);
+  });
+
+  // Bass build
+  document.getElementById('bass-entry-build')?.addEventListener('click', () => {
+    state.idea.role = 'bass';
+    if (bassRoll) state.bass.notes = [...bassRoll.notes];
+    addMessage('bot', `◉ Bassline locked in. Building arrangement from your root movement.`);
+    setTimeout(() => goToStep('scene'), 200);
+    setTimeout(() => goToStep('arrangement'), 500);
+  });
+
+  // Idea role buttons
+  document.querySelectorAll('.idea-role-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.idea-role-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.idea.role = btn.dataset.role;
+    });
+  });
+}
+
+// ── Groove presets ──
+function applyGroovePreset(groove) {
+  // Clear existing pattern
+  Object.keys(state.drums.pattern).forEach(k => { state.drums.pattern[k] = false; });
+
+  const patterns = {
+    'four-on-floor': {
+      kick:  [0,4,8,12],
+      snare: [4,12],
+      chh:   [2,6,10,14],
+      ohh:   [4,12],
+    },
+    'half-time': {
+      kick:  [0,8],
+      snare: [8],
+      chh:   [0,2,4,6,8,10,12,14],
+      ohh:   [8],
+    },
+    'broken': {
+      kick:  [0,3,8,11],
+      snare: [4,13],
+      chh:   [2,6,10,14],
+      ohh:   [6],
+      perc:  [1,5,9,13],
+    },
+    'tribal': {
+      kick:  [0,1,3,4,6,8,9,11],
+      snare: [4,12],
+      chh:   [0,2,4,6,8,10,12,14],
+      perc:  [1,3,5,7,9,11,13,15],
+    },
+  };
+
+  const p = patterns[groove] || patterns['four-on-floor'];
+  Object.entries(p).forEach(([row, steps]) => {
+    steps.forEach(s => { state.drums.pattern[`${row}-${s}`] = true; });
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════
+// NLP DESCRIPTION INTERPRETER
+// Turns plain English into a section designer skeleton
+// ══════════════════════════════════════════════════════════════════
+
+// Keyword maps
+const NLP_SECTIONS = [
+  { keywords: ['intro','start','opening','beginning','first'],   role: 'intro'     },
+  { keywords: ['build','build-up','buildup','ramp','rise','pre drop','pre-drop'], role: 'build' },
+  { keywords: ['drop','hit','boom','bang','explode','kick in'],  role: 'drop'      },
+  { keywords: ['break','breakdown','strip','stripped','quiet','silence','pause','empty'], role: 'breakdown' },
+  { keywords: ['bridge','middle','mid section'],                 role: 'bridge'    },
+  { keywords: ['outro','end','fade','close','finish'],           role: 'outro'     },
+];
+
+const NLP_LAYERS = {
+  kick:  ['kick','four on the floor','beat','drum','thud','boom','bass drum'],
+  snare: ['snare','clap','snap','fill','snare fill'],
+  hats:  ['hat','hi-hat','hihat','cymbal','tick','sizzle'],
+  perc:  ['perc','percussion','conga','bongo','shaker','tribal','texture'],
+  bass:  ['bass','sub','rumble','low end','bassline'],
+  arp:   ['arp','arpeggio','sequence','stab','riff'],
+  lead:  ['lead','melody','hook','synth','motif','phrase'],
+  pad:   ['pad','atmosphere','ambient','wash','strings','chord','chords','epic','cinematic','alien','space','otherworldly','ethereal','lush'],
+};
+
+const NLP_FX = {
+  'filter-up':    ['build','ramp','filter sweep','sweep up','filter rise'],
+  'riser':        ['riser','rise','tension','build up','buildup'],
+  'filter-down':  ['filter down','sweep down','filter fall'],
+  'downlifter':   ['drop','downlifter','fall','descend'],
+  'silence-drop': ['silence','silence drop','sudden stop','dead stop','empty','nothing'],
+  'stutter':      ['stutter','gate','chop','glitch','stuttering'],
+  'rev-cymbal':   ['reverse cymbal','crash','reverse','sweep'],
+};
+
+const NLP_INTENSITY = {
+  high:   ['epic','massive','huge','big','explode','boom','full','all in','hard','heavy','intense','booom','boomm'],
+  medium: ['warm','groove','rolling','steady','flowing','moving'],
+  low:    ['silence','quiet','minimal','empty','bare','stripped','nothing','sparse','subtle'],
+};
+
+function detectSections(text) {
+  const sentences = text.toLowerCase()
+    .replace(/[.!?]+/g, '|')
+    .replace(/,\s*(then|but|and|after|suddenly|again)/g, '|$1')
+    .replace(/(then|but|suddenly|again|this time|repeat)/g, '|$1')
+    .split('|')
+    .map(s => s.trim())
+    .filter(s => s.length > 2);
+
+  const detected = [];
+  let sectionCounter = { intro:0, build:0, drop:0, breakdown:0, bridge:0, outro:0, section:0 };
+
+  sentences.forEach((sentence, si) => {
+    // Identify section role
+    let role = null;
+    for (const sec of NLP_SECTIONS) {
+      if (sec.keywords.some(k => sentence.includes(k))) { role = sec.role; break; }
+    }
+    if (!role) {
+      // Heuristic: first sentence = intro, last = outro, otherwise section
+      role = si === 0 ? 'intro' : si === sentences.length-1 ? 'outro' : 'section';
+    }
+
+    // Detect layers
+    const activeLayers = {};
+    Object.entries(NLP_LAYERS).forEach(([layer, keywords]) => {
+      activeLayers[layer] = keywords.some(k => sentence.includes(k)) ? 10 : 0;
+    });
+
+    // Detect FX
+    const fx = [];
+    Object.entries(NLP_FX).forEach(([fxId, keywords]) => {
+      if (keywords.some(k => sentence.includes(k))) fx.push(fxId);
+    });
+
+    // Detect intensity
+    let intensity = 5;
+    if (NLP_INTENSITY.high.some(k => sentence.includes(k)))   intensity = 9;
+    if (NLP_INTENSITY.low.some(k => sentence.includes(k)))    intensity = 1;
+    if (NLP_INTENSITY.medium.some(k => sentence.includes(k))) intensity = 5;
+
+    // Silence = everything off
+    const isSilence = ['silence','nothing','empty','pause','dead'].some(k => sentence.includes(k));
+    if (isSilence) { Object.keys(activeLayers).forEach(l => activeLayers[l] = 0); intensity = 0; }
+
+    // Detect repeat
+    const isRepeat = ['repeat','again','this time','second time','once more'].some(k => sentence.includes(k));
+
+    // Name the section
+    sectionCounter[role] = (sectionCounter[role] || 0) + 1;
+    const nameMap = { intro:'Intro', build:'Build', drop:'Drop', breakdown:'Breakdown', bridge:'Bridge', outro:'Outro', section:'Section' };
+    const count = sectionCounter[role];
+    const name = count > 1 ? `${nameMap[role]} ${count}` : nameMap[role];
+
+    detected.push({ name, role, sentence, activeLayers, fx, intensity, isRepeat, isSilence });
+  });
+
+  return detected;
+}
+
+let _interpretedSections = [];
+
+function interpretDescription() {
+  const text = document.getElementById('bff-describe-text')?.value?.trim();
+  if (!text) return;
+
+  _interpretedSections = detectSections(text);
+  if (!_interpretedSections.length) return;
+
+  const result = document.getElementById('bff-interpret-result');
+  const birSections = document.getElementById('bir-sections');
+  if (!result || !birSections) return;
+
+  const roleColors = {
+    intro:'#6b6bff', build:'#ffaa33', drop:'#c9a84c',
+    breakdown:'#9b59b6', bridge:'#3bbf8a', outro:'#555', section:'#888'
+  };
+
+  birSections.innerHTML = _interpretedSections.map((sec, i) => {
+    const color = roleColors[sec.role] || '#888';
+    const activeLayerNames = Object.entries(sec.activeLayers)
+      .filter(([,v]) => v > 0).map(([k]) => k);
+    const allLayers = ['kick','snare','hats','perc','bass','arp','lead','pad'];
+
+    return `<div class="bir-section-row" style="--section-color:${color}">
+      <div class="bir-sec-name">${sec.name}</div>
+      <div class="bir-sec-layers">
+        ${allLayers.map(l => `<span class="bir-layer-chip ${activeLayerNames.includes(l) ? 'active' : ''}">${l}</span>`).join('')}
+        ${sec.fx.length ? `<span class="bir-layer-chip active" style="border-color:#3bbf8a;color:#3bbf8a">${sec.fx.join(' + ')}</span>` : ''}
+      </div>
+      <div class="bir-sec-note">${sec.isSilence ? '🔇 Silence' : `intensity ${sec.intensity}`}</div>
+    </div>`;
+  }).join('');
+
+  result.classList.remove('hidden');
+}
+
+function applyInterpretedSections() {
+  if (!_interpretedSections.length) return;
+
+  // Re-init sectionDesigner with interpreted data
+  _interpretedSections.forEach((sec, si) => {
+    const mix = {};
+    Object.entries(sec.activeLayers).forEach(([l, v]) => { mix[l] = v; });
+    // Add reasonable defaults for zero layers
+    if (!Object.values(mix).some(v => v > 0) && !sec.isSilence) {
+      mix.pad = 7; mix.bass = 4;
+    }
+
+    state.sectionDesigner[si] = {
+      name:      sec.name,
+      intensity: sec.intensity,
+      tension:   sec.role === 'build' ? 8 : sec.role === 'drop' ? 4 : sec.role === 'breakdown' ? 2 : 4,
+      release:   sec.role === 'breakdown' ? 9 : sec.role === 'bridge' ? 7 : 3,
+      layerMix:  mix,
+      fx:        sec.fx,
+      bars:      sec.role === 'breakdown' ? 8 : sec.role === 'drop' ? 8 : 4,
+    };
+
+    // Sync to arrangement state
+    Object.keys(mix).forEach(layer => {
+      state.arrangement[`${layer}-${si}`] = mix[layer] > 0;
+    });
+  });
+
+  // Rebuild section names to match interpretation
+  // Override getSections for this track
+  state.scene._customSections = _interpretedSections.map(s => s.name);
+}
+
+// ── Bass roll (separate instance from melody roll) ──
+let bassRoll = null;
+function initBassRoll() {
+  // Reuse the piano roll engine but pointed at the bass canvas
+  // For now, seed a simple octave-lower version of the idea roll
+  const canvas = document.getElementById('bass-roll-canvas');
+  const keysEl = document.getElementById('bass-roll-keys');
+  if (!canvas || !keysEl) return;
+  // Use same init but with bass role
+  if (!bassRoll) bassRoll = { notes: [], role: 'bass' };
+  // Full piano roll init lives in initIdeaRoll — here we point a second instance
+  // For simplicity, reuse the same canvas system but with bass key range
+  initIdeaRollOnCanvas(canvas, keysEl, 'bass', bassRoll);
+}
+
 function buildTrackFromIdea() {
   const role  = state.idea.role || 'melody';
   const notes = state.idea.notes || [];
@@ -1163,7 +1538,23 @@ const BF_Audio = (() => {
   }
 
   // ── Build all synth voices ──
-  function buildSynths() {
+  
+// Play a preview note when clicking on the piano roll
+function playPreviewNote(midi, role) {
+  try {
+    if (!melodySynth && !bassSynth) buildSynths();
+    const freq = Tone.Frequency(Math.max(21, Math.min(108, midi)), 'midi').toFrequency();
+    const dur  = role === 'bass' ? '8n' : '16n';
+    const vel  = 0.7;
+    if (role === 'bass' && bassSynth) {
+      bassSynth.triggerAttackRelease(freq, dur, Tone.now(), vel);
+    } else if (melodySynth) {
+      melodySynth.triggerAttackRelease(freq, dur, Tone.now(), vel);
+    }
+  } catch(e) { /* silent fail — preview is bonus */ }
+}
+
+function buildSynths() {
     // ── Melody / Lead — supersaw detuned PolySynth with delay ──
     try {
       const melDelay = new Tone.FeedbackDelay({ delayTime: '8n.', feedback: 0.35, wet: 0.22 }).toDestination();
