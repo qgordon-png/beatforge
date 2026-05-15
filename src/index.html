@@ -331,34 +331,18 @@
         <!-- ─── STEP 2: ARRANGEMENT ─── -->
         <section class="step-panel" id="panel-arrangement">
           <div class="panel-header">
-            <h2>Design the Arrangement</h2>
-            <p class="panel-desc">Toggle blocks on/off to define which layers play in each section. This grid drives everything.</p>
+            <h2>Section Designer</h2>
+            <p class="panel-desc">Shape each section of your track. Click a section to expand its controls.</p>
           </div>
 
-          <!-- Section labels -->
-          <div class="arr-container">
-            <div class="arr-labels">
-              <div class="arr-label-spacer"></div>
-              <div class="arr-section-labels" id="section-labels">
-                <!-- Filled by JS -->
-              </div>
-            </div>
-
-            <!-- Grid -->
-            <div class="arr-grid-wrap">
-              <div class="arr-layer-labels" id="layer-labels">
-                <!-- Filled by JS -->
-              </div>
-              <div class="arr-grid" id="arr-grid">
-                <!-- Filled by JS -->
-              </div>
-            </div>
+          <!-- Section strip (horizontal tabs) -->
+          <div class="sd-strip" id="sd-strip">
+            <!-- Filled by JS -->
           </div>
 
-          <div class="arr-legend">
-            <span class="arr-leg-item"><span class="arr-leg-on"></span> Active</span>
-            <span class="arr-leg-item"><span class="arr-leg-off"></span> Silent</span>
-            <span class="arr-leg-item">Click to toggle · Right-click for options</span>
+          <!-- Expanded section editor -->
+          <div class="sd-editor" id="sd-editor">
+            <div class="sd-editor-empty">Select a section above to edit it</div>
           </div>
 
           <div class="panel-actions">

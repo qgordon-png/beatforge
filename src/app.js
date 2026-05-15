@@ -20,6 +20,7 @@ const state = {
     density: 'balanced',
   },
   arrangement: {},
+  sectionDesigner: {},   // per-section: { intensity, tension, release, layerMix, fx }
   progression: {},    // per-section evolution: { 'si': { melody:{}, bass:{}, drums:{} } }
   drums: { style:'rolling', swing:15, density:5, humanise:30, pattern:{} },
   bass: { style:'rolling-sub', complexity:4, octave:1, notes:[] },
@@ -1593,8 +1594,276 @@ function goToStep(step) {
 }
 
 // ─── ARRANGEMENT GRID ───
+
+// ═══════════════════════════════════════════════════════════════
+// SECTION DESIGNER
+// ═══════════════════════════════════════════════════════════════
+
+const SD_LAYERS = [
+  { id:'kick',  name:'Kick',    icon:'🥁' },
+  { id:'snare', name:'Snare',   icon:'🔵' },
+  { id:'hats',  name:'Hats',    icon:'🎩' },
+  { id:'perc',  name:'Perc',    icon:'🪘' },
+  { id:'bass',  name:'Bass',    icon:'◉'  },
+  { id:'arp',   name:'Arp',     icon:'♪'  },
+  { id:'lead',  name:'Lead',    icon:'♫'  },
+  { id:'pad',   name:'Pad',     icon:'≋'  },
+];
+
+const SD_FX = [
+  { id:'filter-up',    name:'Filter Sweep ↑',  cc:74 },
+  { id:'filter-down',  name:'Filter Sweep ↓',  cc:74 },
+  { id:'riser',        name:'Riser',            cc:73 },
+  { id:'downlifter',   name:'Downlifter',       cc:73 },
+  { id:'stutter',      name:'Stutter / Gate',   cc:92 },
+  { id:'glitch',       name:'Glitch',           cc:93 },
+  { id:'rev-cymbal',   name:'Reverse Cymbal',   cc:91 },
+  { id:'silence-drop', name:'Silence Drop',     cc:7  },
+  { id:'chop',         name:'Chop',             cc:92 },
+  { id:'bitcrush',     name:'Bitcrush',         cc:94 },
+];
+
+const SD_ROLE_COLORS = {
+  intro:     '#6b6bff',
+  build:     '#ffaa33',
+  'pre-chorus': '#ff7f50',
+  drop:      '#c9a84c',
+  breakdown: '#9b59b6',
+  bridge:    '#3bbf8a',
+  outro:     '#555',
+};
+
+function sdGetColor(name) {
+  const n = name.toLowerCase();
+  if (n.includes('intro'))    return SD_ROLE_COLORS.intro;
+  if (n.includes('build'))    return SD_ROLE_COLORS.build;
+  if (n.includes('pre'))      return SD_ROLE_COLORS['pre-chorus'];
+  if (n.includes('drop'))     return SD_ROLE_COLORS.drop;
+  if (n.includes('breakdown') || n.includes('break')) return SD_ROLE_COLORS.breakdown;
+  if (n.includes('bridge'))   return SD_ROLE_COLORS.bridge;
+  if (n.includes('outro'))    return SD_ROLE_COLORS.outro;
+  return '#c9a84c';
+}
+
+function sdDefaultSection(name, si, total) {
+  const n = name.toLowerCase();
+  const isIntro     = n.includes('intro');
+  const isBuild     = n.includes('build') || n.includes('pre');
+  const isDrop      = n.includes('drop');
+  const isBreakdown = n.includes('breakdown') || n.includes('break');
+  const isBridge    = n.includes('bridge');
+  const isOutro     = n.includes('outro');
+
+  // Default layer mix 0-10
+  const mix = {};
+  SD_LAYERS.forEach(l => { mix[l.id] = 0; });
+  if (isIntro)     { mix.pad=7; mix.bass=3; mix.hats=4; }
+  if (isBuild)     { mix.kick=5; mix.hats=7; mix.bass=6; mix.arp=5; mix.pad=6; }
+  if (isDrop)      { mix.kick=10; mix.snare=8; mix.hats=9; mix.perc=7; mix.bass=10; mix.arp=8; mix.lead=9; mix.pad=5; }
+  if (isBreakdown) { mix.pad=9; mix.bass=4; mix.lead=5; }
+  if (isBridge)    { mix.pad=8; mix.arp=7; mix.bass=5; mix.hats=4; }
+  if (isOutro)     { mix.pad=6; mix.bass=3; mix.hats=3; }
+
+  return {
+    intensity: isDrop ? 9 : isBuild ? 6 : isBreakdown ? 3 : isBridge ? 5 : isIntro ? 2 : isOutro ? 2 : 5,
+    tension:   isBuild ? 8 : isDrop ? 4 : isBreakdown ? 2 : isBridge ? 7 : 3,
+    release:   isBreakdown ? 9 : isBridge ? 7 : isDrop ? 2 : isIntro ? 5 : 4,
+    layerMix:  mix,
+    fx:        [],
+    bars:      4,
+  };
+}
+
+function initSectionDesigner() {
+  const sections = getSections(state.scene.length);
+  const bpm      = state.scene.bpm;
+  const totalMin = parseFloat(state.scene.length) || 6;
+  const barsEach = getBarsPerSection(bpm, totalMin, sections.length);
+
+  // Initialise sectionDesigner state
+  sections.forEach((name, si) => {
+    if (!state.sectionDesigner[si]) {
+      state.sectionDesigner[si] = sdDefaultSection(name, si, sections.length);
+      state.sectionDesigner[si].name = name;
+      state.sectionDesigner[si].bars = barsEach;
+    }
+  });
+
+  // Also keep arrangement state in sync (for MIDI export)
+  LAYERS.forEach(layer => {
+    sections.forEach((sec, si) => {
+      const key = `${layer.id}-${si}`;
+      if (!(key in state.arrangement)) {
+        state.arrangement[key] = getDefaultArrangement(layer.id, si, sections.length);
+      }
+    });
+  });
+
+  renderSDStrip(sections);
+  // Auto-select first section
+  if (sections.length) openSDEditor(0, sections);
+}
+
+function renderSDStrip(sections) {
+  const strip = document.getElementById('sd-strip');
+  if (!strip) return;
+  strip.innerHTML = sections.map((name, si) => {
+    const color = sdGetColor(name);
+    return `<div class="sd-tab" id="sd-tab-${si}" data-si="${si}" style="border-bottom:3px solid ${color}" onclick="openSDEditor(${si}, null)">
+      <span class="sd-tab-name">${name}</span>
+    </div>`;
+  }).join('');
+}
+
+let _sdSections = null; // cache sections for editor
+
+function openSDEditor(si, sectionsArg) {
+  if (sectionsArg) _sdSections = sectionsArg;
+  const sections = _sdSections || getSections(state.scene.length);
+  const name = sections[si];
+  const sd   = state.sectionDesigner[si];
+  if (!sd) return;
+  const color = sdGetColor(name);
+
+  // Highlight active tab
+  document.querySelectorAll('.sd-tab').forEach(t => t.classList.remove('active'));
+  const tab = document.getElementById(`sd-tab-${si}`);
+  if (tab) tab.classList.add('active');
+
+  const editor = document.getElementById('sd-editor');
+  if (!editor) return;
+
+  editor.innerHTML = `
+    <div class="sd-edit-wrap">
+      <div class="sd-edit-header" style="border-left:4px solid ${color}">
+        <span class="sd-edit-title">${name}</span>
+        <span class="sd-edit-bars">${sd.bars} bars</span>
+      </div>
+
+      <!-- ── Layer Mix ── -->
+      <div class="sd-section-block">
+        <div class="sd-block-title">Layer Mix</div>
+        <div class="sd-layer-grid">
+          ${SD_LAYERS.map(l => `
+            <div class="sd-layer-item">
+              <div class="sd-layer-name">${l.icon} ${l.name}</div>
+              <input type="range" class="sd-mix-slider" min="0" max="10" step="1"
+                value="${sd.layerMix[l.id] || 0}"
+                data-si="${si}" data-layer="${l.id}"
+                style="--accent:${color}">
+              <span class="sd-mix-val" id="sd-mix-val-${si}-${l.id}">${sd.layerMix[l.id] || 0}</span>
+            </div>`).join('')}
+        </div>
+      </div>
+
+      <!-- ── Section Controls ── -->
+      <div class="sd-section-block">
+        <div class="sd-block-title">Shape</div>
+        <div class="sd-shape-grid">
+          <div class="sd-shape-item">
+            <label>Intensity</label>
+            <input type="range" class="sd-shape-slider" min="1" max="10" step="1"
+              value="${sd.intensity}" data-si="${si}" data-prop="intensity"
+              style="--accent:${color}">
+            <span class="sd-shape-val" id="sd-shape-intensity-${si}">${sd.intensity}</span>
+            <span class="sd-shape-hint">note density + velocity</span>
+          </div>
+          <div class="sd-shape-item">
+            <label>Tension</label>
+            <input type="range" class="sd-shape-slider" min="1" max="10" step="1"
+              value="${sd.tension}" data-si="${si}" data-prop="tension"
+              style="--accent:${color}">
+            <span class="sd-shape-val" id="sd-shape-tension-${si}">${sd.tension}</span>
+            <span class="sd-shape-hint">harmonic direction ↑ away from tonic</span>
+          </div>
+          <div class="sd-shape-item">
+            <label>Release</label>
+            <input type="range" class="sd-shape-slider" min="1" max="10" step="1"
+              value="${sd.release}" data-si="${si}" data-prop="release"
+              style="--accent:${color}">
+            <span class="sd-shape-val" id="sd-shape-release-${si}">${sd.release}</span>
+            <span class="sd-shape-hint">note tail length into next section</span>
+          </div>
+          <div class="sd-shape-item">
+            <label>Length (bars)</label>
+            <select class="sd-bars-select" data-si="${si}">
+              ${[2,4,8,16,32].map(b => `<option value="${b}" ${b===sd.bars?'selected':''}>${b} bars</option>`).join('')}
+            </select>
+            <span class="sd-shape-hint">section duration</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── FX Lane ── -->
+      <div class="sd-section-block">
+        <div class="sd-block-title">FX Lane <span class="sd-fx-hint">exports as CC automation in MIDI pack</span></div>
+        <div class="sd-fx-grid">
+          ${SD_FX.map(fx => `
+            <div class="sd-fx-chip ${sd.fx.includes(fx.id) ? 'active' : ''}"
+              data-si="${si}" data-fx="${fx.id}" data-cc="${fx.cc}"
+              onclick="toggleSDFx(${si}, '${fx.id}', this)">
+              ${fx.name}
+            </div>`).join('')}
+        </div>
+      </div>
+
+      <!-- ── Nav ── -->
+      <div class="sd-nav">
+        ${si > 0 ? `<button class="btn-ghost sd-nav-btn" onclick="openSDEditor(${si-1}, null)">← ${sections[si-1]}</button>` : '<span></span>'}
+        ${si < sections.length-1 ? `<button class="btn-ghost sd-nav-btn" onclick="openSDEditor(${si+1}, null)">${sections[si+1]} →</button>` : '<span></span>'}
+      </div>
+    </div>`;
+
+  // Wire layer mix sliders
+  editor.querySelectorAll('.sd-mix-slider').forEach(sl => {
+    sl.addEventListener('input', () => {
+      const _si = parseInt(sl.dataset.si);
+      const layer = sl.dataset.layer;
+      const val = parseInt(sl.value);
+      state.sectionDesigner[_si].layerMix[layer] = val;
+      const v = document.getElementById(`sd-mix-val-${_si}-${layer}`);
+      if (v) v.textContent = val;
+      // Sync to arrangement state
+      state.arrangement[`${layer}-${_si}`] = val > 0;
+    });
+  });
+
+  // Wire shape sliders
+  editor.querySelectorAll('.sd-shape-slider').forEach(sl => {
+    sl.addEventListener('input', () => {
+      const _si = parseInt(sl.dataset.si);
+      const prop = sl.dataset.prop;
+      const val = parseInt(sl.value);
+      state.sectionDesigner[_si][prop] = val;
+      const v = document.getElementById(`sd-shape-${prop}-${_si}`);
+      if (v) v.textContent = val;
+    });
+  });
+
+  // Wire bars select
+  editor.querySelectorAll('.sd-bars-select').forEach(sel => {
+    sel.addEventListener('change', () => {
+      const _si = parseInt(sel.dataset.si);
+      state.sectionDesigner[_si].bars = parseInt(sel.value);
+    });
+  });
+}
+
+function toggleSDFx(si, fxId, el) {
+  const sd = state.sectionDesigner[si];
+  if (!sd) return;
+  if (sd.fx.includes(fxId)) {
+    sd.fx = sd.fx.filter(f => f !== fxId);
+    el.classList.remove('active');
+  } else {
+    sd.fx.push(fxId);
+    el.classList.add('active');
+  }
+}
+
+
 function initArrangement() {
-  buildArrangementGrid();
+  initSectionDesigner();
 }
 
 function buildArrangementGrid() {
@@ -2427,6 +2696,108 @@ async function previewPads() {
   );
 }
 
+
+// ── FX Lane → CC Automation MIDI ──
+function buildFxAutomationMidi() {
+  const sections = getSections(state.scene.length);
+  const events = [];
+  let absoluteTick = 0;
+  const TICKS_PER_BEAT = 480;
+  const TICKS_PER_BAR  = TICKS_PER_BEAT * 4;
+
+  sections.forEach((name, si) => {
+    const sd = state.sectionDesigner[si];
+    const barCount = sd ? sd.bars : 4;
+    const barTicks = barCount * TICKS_PER_BAR;
+    if (!sd || !sd.fx || !sd.fx.length) { absoluteTick += barTicks; return; }
+
+    sd.fx.forEach(fxId => {
+      const fxDef = SD_FX.find(f => f.id === fxId);
+      if (!fxDef) return;
+      const cc = fxDef.cc;
+
+      if (fxId === 'filter-up' || fxId === 'riser') {
+        for (let step = 0; step <= 32; step++) {
+          events.push({ tick: absoluteTick + Math.floor((step/32)*barTicks), cc, val: Math.floor((step/32)*127) });
+        }
+      } else if (fxId === 'filter-down' || fxId === 'downlifter') {
+        for (let step = 0; step <= 32; step++) {
+          events.push({ tick: absoluteTick + Math.floor((step/32)*barTicks), cc, val: 127 - Math.floor((step/32)*127) });
+        }
+      } else if (fxId === 'silence-drop') {
+        events.push({ tick: absoluteTick, cc, val: 100 });
+        events.push({ tick: absoluteTick + barTicks - TICKS_PER_BEAT, cc, val: 0 });
+      } else if (fxId === 'stutter' || fxId === 'chop') {
+        for (let beat = 0; beat < barCount * 4; beat++) {
+          events.push({ tick: absoluteTick + beat * TICKS_PER_BEAT, cc, val: beat % 2 === 0 ? 127 : 0 });
+        }
+      } else if (fxId === 'glitch' || fxId === 'bitcrush') {
+        for (let beat = 0; beat < barCount * 4; beat++) {
+          const offset = beat % 3 === 0 ? Math.floor(TICKS_PER_BEAT/8) : 0;
+          events.push({ tick: absoluteTick + beat * TICKS_PER_BEAT + offset, cc,
+            val: beat % 3 === 0 ? 127 : beat % 2 === 0 ? 64 : 0 });
+        }
+      } else {
+        events.push({ tick: absoluteTick, cc, val: 127 });
+        events.push({ tick: absoluteTick + barTicks, cc, val: 0 });
+      }
+    });
+
+    absoluteTick += barTicks;
+  });
+
+  if (!events.length) return null;
+
+  events.sort((a,b) => a.tick - b.tick);
+
+  // Build raw MIDI bytes directly (no helper dependency)
+  const bpm = state.scene.bpm || 128;
+  const tempo = Math.round(60000000 / bpm);
+  const rawEvents = [];
+
+  // Tempo meta event at tick 0
+  rawEvents.push({ tick: 0, data: [0xFF,0x51,0x03,(tempo>>16)&0xFF,(tempo>>8)&0xFF,tempo&0xFF] });
+  // Track name
+  const tname = [0xFF,0x03,0x0E,...'BFF FX Automation'.split('').map(c=>c.charCodeAt(0))];
+  rawEvents.push({ tick: 0, data: tname });
+
+  // CC events
+  events.forEach(ev => {
+    rawEvents.push({ tick: ev.tick, data: [0xB0, ev.cc & 0x7F, ev.val & 0x7F] });
+  });
+
+  rawEvents.sort((a,b) => a.tick - b.tick);
+
+  // Encode as delta-time events
+  const trackBytes = [];
+  let prevTick = 0;
+  rawEvents.forEach(ev => {
+    const delta = ev.tick - prevTick;
+    writeVarLen(trackBytes, delta);
+    trackBytes.push(...ev.data);
+    prevTick = ev.tick;
+  });
+  writeVarLen(trackBytes, 0);
+  trackBytes.push(0xFF, 0x2F, 0x00); // end of track
+
+  // MIDI header chunk (format 0, 1 track, 480 ticks/beat)
+  const header = [
+    0x4D,0x54,0x68,0x64, 0x00,0x00,0x00,0x06,
+    0x00,0x00, 0x00,0x01,
+    (TICKS_PER_BEAT>>8)&0xFF, TICKS_PER_BEAT&0xFF
+  ];
+
+  // Track chunk
+  const trackLen = trackBytes.length;
+  const trackChunk = [
+    0x4D,0x54,0x72,0x6B, // "MTrk"
+    (trackLen>>24)&0xFF,(trackLen>>16)&0xFF,(trackLen>>8)&0xFF,trackLen&0xFF,
+    ...trackBytes
+  ];
+
+  return new Uint8Array([...header, ...trackChunk]);
+}
+
 // ═══════════════════════════════════════════════
 // MIDI EXPORT ENGINE
 // Pure JS — no dependencies. Builds a valid .mid file binary.
@@ -2880,6 +3251,13 @@ async function exportFullMidiPack() {
   if (state.pads.notes.length) {
     files.push({ name: `${safe}_Pads.mid`, bytes: buildNotesMidi(state.pads.notes, 2, bpm, 'BFF Pads') });
     exported.push('Pads');
+  }
+
+  // ── FX AUTOMATION ──
+  const fxMidi = buildFxAutomationMidi();
+  if (fxMidi) {
+    files.push({ name: `${safe}_FX_Automation.mid`, bytes: fxMidi });
+    exported.push('FX Automation (CC)');
   }
 
   const zip = buildZip(files);
