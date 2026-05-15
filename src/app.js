@@ -1583,9 +1583,9 @@ function buildSynths() {
       const padDelay = new Tone.FeedbackDelay({ delayTime: '4n', feedback: 0.4, wet: 0.35 }).toDestination();
       const padFilter = new Tone.Filter({ frequency: 4500, type: 'lowpass' }).connect(padDelay);
       padSynth = new Tone.PolySynth(Tone.Synth, {
-        oscillator: { type: 'fatsawtooth', count: 2, spread: 28 },
-        envelope: { attack: 0.7, decay: 0.5, sustain: 0.85, release: 3.5 },
-        volume: -13,
+        oscillator: { type: 'fatsawtooth', count: 3, spread: 40 },
+        envelope:   { attack: 1.2, decay: 0.6, sustain: 0.88, release: 5.0 },
+        volume:     -16,
       }).connect(padFilter);
     } catch(e) { console.error('[BF] padSynth build failed:', e); }
 
@@ -1891,10 +1891,17 @@ function updateState(field, value) {
     case 'atmosphere':  state.scene.atmosphere  = value; break;
     case 'density':     state.scene.density     = value; break;
     case 'drum-style':  state.drums.style       = value; break;
-    case 'bass-style':  state.bass.style        = value; break;
+    case 'bass-style':  state.bass.style = value;
+      // Auto re-generate when style changes (if notes already exist)
+      if (state.bass.notes.length) { setTimeout(() => aiGenerateBass(), 50); }
+      break;
     case 'melody-phrase': state.melody.phraseLen = parseInt(value) || 16; break;
-    case 'melody-style':state.melody.style      = value; break;
-    case 'pad-style':   state.pads.style        = value; break;
+    case 'melody-style': state.melody.style = value;
+      if (state.melody.notes.length) { setTimeout(() => aiGenerateMelody(), 50); }
+      break;
+    case 'pad-style': state.pads.style = value;
+      if (state.pads.notes.length) { setTimeout(() => aiGeneratePads(), 50); }
+      break;
     case 'fx-elements': state.pads.fx           = value; break;
   }
   updateTransportBar();
@@ -2436,8 +2443,16 @@ function initRangeSliders() {
         if (slider.id === 'drum-humanise') state.drums.humanise = parseInt(slider.value);
         if (slider.id === 'bass-complexity') state.bass.complexity = parseInt(slider.value);
         if (slider.id === 'bass-octave') state.bass.octave = parseInt(slider.value);
-        if (slider.id === 'melody-complexity') state.melody.complexity = parseInt(slider.value);
-        if (slider.id === 'melody-density') state.melody.density = parseInt(slider.value);
+        if (slider.id === 'melody-complexity') {
+          state.melody.complexity = parseInt(slider.value);
+          if (state.melody.notes.length) clearTimeout(window._melRegenTimer);
+          window._melRegenTimer = setTimeout(() => { if (state.melody.notes.length) aiGenerateMelody(); }, 600);
+        }
+        if (slider.id === 'melody-density') {
+          state.melody.density = parseInt(slider.value);
+          if (state.melody.notes.length) clearTimeout(window._melRegenTimer);
+          window._melRegenTimer = setTimeout(() => { if (state.melody.notes.length) aiGenerateMelody(); }, 600);
+        }
       });
     }
   });
@@ -2668,47 +2683,107 @@ async function aiGenerateDrums() {
 
 async function aiGenerateBass() {
   addMessage('bot', "Writing a bassline around your drums... <em>This is the fun part.</em>");
-  
-  const key = state.scene.key;
-  const style = state.bass.style;
-  const complexity = state.bass.complexity;
-  
-  // Generate bass notes based on key and style
-  const root = getNoteNumber(key);
-  const scale = getScale(key);
-  
+
+  const key        = state.scene.key;
+  const style      = state.bass.style || 'rolling-sub';
+  const complexity = state.bass.complexity || 4; // 1–9
+  const octave     = state.bass.octave || 1;     // octave offset
+  const root       = getNoteNumber(key) - 12 + (octave - 1) * 12; // bass register
+  const scale      = getScale(key).map(n => n - 12 + (octave - 1) * 12);
+  const bars       = 2;
+  const steps      = bars * 16;
+
   let notes = [];
-  const barLength = 16; // 16th notes per bar
-  
-  if (style === 'rolling-sub') {
-    // Simple rolling sub — root note on kick hits
-    notes = [
-      { note: root, time: 0, duration: 3, velocity: 110 },
-      { note: root, time: 4, duration: 3, velocity: 100 },
-      { note: root, time: 8, duration: 3, velocity: 110 },
-      { note: root, time: 12, duration: 3, velocity: 100 },
-    ];
-    if (complexity > 5) {
-      notes.push({ note: scale[4], time: 6, duration: 1, velocity: 80 });
-      notes.push({ note: scale[3], time: 14, duration: 1, velocity: 75 });
+
+  if (style === 'rolling-sub' || style === 'reese') {
+    // Root-locked, complexity adds passing notes & rhythmic variation
+    const stepSize = complexity <= 3 ? 4 : complexity <= 6 ? 2 : 1;
+    for (let s = 0; s < steps; s += stepSize) {
+      const isDownbeat = s % 4 === 0;
+      const vel = isDownbeat ? 110 : 80 + Math.floor(Math.random() * 20);
+      // Low complexity = root only. High complexity = scale walk
+      let note = root;
+      if (complexity > 4 && !isDownbeat) {
+        const walkOptions = [scale[0], scale[2], scale[4], scale[0]-2, scale[0]+2];
+        note = walkOptions[Math.floor(Math.random() * walkOptions.length)];
+      }
+      if (complexity > 7 && s % 8 === 6) note = scale[4]; // fifth approach
+      notes.push({ note, time: s, duration: Math.max(1, stepSize - 1), velocity: vel });
     }
   } else if (style === 'acid') {
-    notes = scale.slice(0,5).map((n, i) => ({
-      note: n, time: i * 3, duration: 2, velocity: 90 + Math.random() * 20
-    }));
-  } else {
-    // Pluck/Reese/FM — arpeggiated
-    for (let i = 0; i < barLength; i += (11 - complexity)) {
-      const scaleIdx = Math.floor(Math.random() * Math.min(complexity, scale.length));
-      notes.push({ note: scale[scaleIdx], time: i, duration: 2, velocity: 85 + Math.random() * 25 });
+    // Classic TB-303 feel — syncopated, gliding, lots of passing tones
+    const acidPatterns = [0, 0, 3, 0, -2, 0, 4, 0, 0, 3, -2, 4, 0, -1, 2, 0];
+    const durations    = [2, 1, 2, 1, 1,  2, 1, 2, 1, 1,  2, 1, 3,  1, 1, 2];
+    let t = 0;
+    acidPatterns.forEach((interval, i) => {
+      if (t >= steps) return;
+      const noteVal = root + interval;
+      const vel = i % 4 === 0 ? 110 : 75 + Math.floor(Math.random() * 30);
+      const extraNotes = complexity > 6 ? 2 : complexity > 3 ? 1 : 0;
+      notes.push({ note: noteVal, time: t, duration: durations[i] || 1, velocity: vel });
+      t += durations[i] || 2;
+    });
+    if (complexity > 4) {
+      // Add accent notes
+      notes.push({ note: root + 12, time: 6,  duration: 1, velocity: 95 });
+      notes.push({ note: root + 7,  time: 14, duration: 1, velocity: 90 });
     }
+  } else if (style === 'pluck') {
+    // Short plucked notes, rhythmically precise
+    const pluckRhythm = [0, 2, 4, 6, 8, 10, 11, 12, 14].filter(s => s < steps);
+    pluckRhythm.forEach((s, i) => {
+      const deg = [0, 0, 2, 4, 0, 5, 3, 2, 4][i % 9];
+      notes.push({ note: (scale[deg] || root), time: s, duration: 1, velocity: 90 + (s % 8 === 0 ? 15 : 0) });
+    });
+    if (complexity > 5) {
+      // Extra ghost notes
+      [1, 5, 9, 13].forEach(s => {
+        if (Math.random() < 0.5) notes.push({ note: root, time: s, duration: 1, velocity: 55 });
+      });
+    }
+  } else if (style === 'fm-bass') {
+    // FM-style: longer tones, octave jumps, few notes
+    const fmPattern = [
+      { step: 0,  deg: 0, dur: 6 },
+      { step: 6,  deg: 4, dur: 2 },
+      { step: 8,  deg: 0, dur: 4 },
+      { step: 12, deg: 2, dur: 2 },
+      { step: 14, deg: 7, dur: 2 },
+    ];
+    fmPattern.forEach(p => {
+      const n = scale[p.deg % scale.length] || root;
+      // High complexity = octave jump variation
+      const octShift = complexity > 6 && p.step === 6 ? 12 : 0;
+      notes.push({ note: n + octShift, time: p.step, duration: p.dur, velocity: 95 });
+    });
+    if (steps > 16) {
+      // Second bar variation
+      fmPattern.forEach(p => {
+        const variation = complexity > 4 ? Math.floor(Math.random() * 3) - 1 : 0;
+        notes.push({ note: (scale[(p.deg + variation) % scale.length] || root),
+          time: p.step + 16, duration: p.dur, velocity: 90 });
+      });
+    }
+  } else {
+    // Minimal pulse
+    [0, 8].forEach(s => notes.push({ note: root, time: s, duration: 3, velocity: 100 }));
   }
-  
+
+  // Sort by time, clamp MIDI
+  notes = notes.sort((a,b) => a.time - b.time)
+               .map(n => ({ ...n, note: Math.max(24, Math.min(84, n.note)) }));
+
   state.bass.notes = notes;
-  renderPianoRoll('bass-pianoroll', notes, root - 12, root + 12);
-  
+  renderPianoRoll('bass-pianoroll', notes, root - 2, root + 14);
+
+  const styleLabels = { 'rolling-sub':'Rolling Sub', 'acid':'Acid', 'pluck':'Pluck', 'reese':'Reese', 'fm-bass':'FM Bass' };
   setTimeout(() => {
-    addMessage('bot', `${style.replace(/-/g,' ')} bassline in ${key}. ${notes.length} notes, sits right under your kick pattern. <em>You can feel that low end already.</em>`);
+    addMessage('bot', `<strong>${styleLabels[style]||style}</strong> bassline in ${key}. ${notes.length} notes, complexity ${complexity}/9. ${
+      style==='acid'?'TB-303 flavour — syncopated and gliding.':
+      style==='pluck'?'Short percussive hits — locks in tight with the kick.':
+      style==='fm-bass'?'Long FM tones with octave jumps.':
+      'Root-locked with scale walks on the high complexity setting.'
+    } <em>You can feel that low end already.</em>`);
   }, 600);
 }
 
@@ -2819,34 +2894,101 @@ async function aiGeneratePads() {
   const scale = getScale(key);
   const root  = getNoteNumber(key);
   const atmo  = state.scene.atmosphere || 'euphoric';
+  const style = state.pads.style || 'warm-pad';
 
-  // Use same chord progression logic as melody
-  const progKey  = Object.keys(CHORD_PROGRESSIONS).find(k => atmo.includes(k)) || 'euphoric';
+  // Chord progression
+  const progKey   = Object.keys(CHORD_PROGRESSIONS).find(k => atmo.includes(k)) || 'euphoric';
   const chordProg = CHORD_PROGRESSIONS[progKey];
-  const totalSteps = 32;
+  const bars      = 4;
+  const totalSteps = bars * 16;
   const chordLen   = Math.floor(totalSteps / chordProg.length);
 
   const notes = [];
+
   chordProg.forEach((chord, ci) => {
     const startStep = ci * chordLen;
-    // Build a 3-note chord voicing (root, 3rd, 5th) one octave up
-    chord.forEach((deg, vi) => {
-      const midi = scale[deg % scale.length] + 12;
-      notes.push({
-        note: midi,
-        time: startStep,
-        duration: chordLen,
-        velocity: vi === 0 ? 65 : 55, // root slightly louder
+
+    if (style === 'warm-pad' || style === 'strings') {
+      // Full lush voicing — root + 3rd + 5th + octave, long sustain
+      const voicing = [0, chord[1] || 2, chord[2] || 4, 0 + 12];
+      voicing.forEach((deg, vi) => {
+        const midi = scale[deg % scale.length] + 12;
+        notes.push({ note: midi, time: startStep, duration: chordLen - 1, velocity: vi === 0 ? 65 : 50 });
       });
-    });
+    } else if (style === 'dark-stab') {
+      // Short punchy stabs on the downbeat, upper chord tones only
+      chord.slice(0, 2).forEach((deg, vi) => {
+        const midi = scale[deg % scale.length] + 12;
+        notes.push({ note: midi, time: startStep, duration: 2, velocity: 85 - vi * 10 });
+        if (ci > 0) notes.push({ note: midi, time: startStep + 8, duration: 2, velocity: 70 });
+      });
+    } else if (style === 'arpeggiated') {
+      // Arpeggio pad — notes stagger in across the chord
+      chord.forEach((deg, vi) => {
+        const midi = scale[deg % scale.length] + 12;
+        notes.push({ note: midi, time: startStep + vi * 4, duration: chordLen - vi * 4, velocity: 60 - vi * 5 });
+      });
+    } else if (style === 'cinematic') {
+      // Wide spread — low root + high octave + 5th in middle
+      const spread = [
+        { deg: 0, oct: 0, vel: 70 },   // root
+        { deg: chord[2] || 4, oct: 0, vel: 50 }, // 5th
+        { deg: 0, oct: 1, vel: 55 },   // root +8va
+        { deg: chord[1] || 2, oct: 1, vel: 45 }, // 3rd high
+      ];
+      spread.forEach(({ deg, oct, vel }) => {
+        const midi = scale[deg % scale.length] + 12 + oct * 12;
+        notes.push({ note: midi, time: startStep, duration: chordLen - 1, velocity: vel });
+      });
+      // Fade in effect — velocity crescendo notes
+      if (ci === 0) {
+        notes.push({ note: scale[0] + 24, time: startStep + 4, duration: chordLen - 4, velocity: 40 });
+      }
+    } else {
+      // Default — same as warm-pad
+      chord.forEach((deg, vi) => {
+        const midi = scale[deg % scale.length] + 12;
+        notes.push({ note: midi, time: startStep, duration: chordLen - 1, velocity: 60 - vi * 5 });
+      });
+    }
   });
 
+  notes.sort((a,b) => a.time - b.time);
   state.pads.notes = notes;
-  renderPianoRoll('pads-pianoroll', notes, root + 6, root + 30);
-  
+  renderPianoRoll('pads-pianoroll', notes, root + 6, root + 36);
+
+  const styleDesc = {
+    'warm-pad': 'Lush, full chord voicings — root + 3rd + 5th + octave. Long sustain.',
+    'dark-stab': 'Short punchy stabs on the downbeat. Tight and rhythmic.',
+    'arpeggiated': 'Notes stagger in across each chord — builds tension naturally.',
+    'cinematic': 'Wide spread voicing with octave jumps — epic and expansive.',
+    'strings': 'Full orchestral-style string voicings. Use a string VST for best results.',
+  };
   setTimeout(() => {
-    addMessage('bot', `Warm pad chords in ${key}. Long sustained notes that breathe underneath everything. <em>Now THAT's an atmosphere.</em>`);
+    addMessage('bot', `<strong>${style.replace(/-/g,' ')}</strong> pads in ${key}. ${styleDesc[style] || ''} <em>That's the emotional bed everything else sits in.</em>`);
   }, 500);
+}
+
+
+// ── Piano roll playhead highlight ──
+function highlightPianoRollStep(containerId, step) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  // Remove previous playhead
+  container.querySelectorAll('.pr-playhead').forEach(el => el.remove());
+  const totalSteps = 32;
+  const W = container.clientWidth || 600;
+  const cellW = W / totalSteps;
+  const playhead = document.createElement('div');
+  playhead.className = 'pr-playhead';
+  playhead.style.cssText = `position:absolute;top:0;bottom:0;width:${cellW}px;left:${step*cellW}px;background:rgba(201,168,76,0.25);pointer-events:none;z-index:10;`;
+  container.style.position = 'relative';
+  container.appendChild(playhead);
+}
+function clearPianoRollHighlight(containerId) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  container.querySelectorAll('.pr-playhead').forEach(el => el.remove());
 }
 
 // ─── PIANO ROLL RENDERER ───
@@ -3039,8 +3181,8 @@ async function previewBass() {
     state.bass.notes,
     state.scene.bpm || 128,
     'bass',
-    null,
-    () => { if (btn) btn.textContent = '▶ Preview'; }
+    (step) => highlightPianoRollStep('bass-pianoroll', step),
+    () => { if (btn) btn.textContent = '▶ Preview'; clearPianoRollHighlight('bass-pianoroll'); }
   );
 }
 
@@ -3058,8 +3200,8 @@ async function previewMelody() {
     state.melody.notes,
     state.scene.bpm || 128,
     'melody',
-    null,
-    () => { if (btn) btn.textContent = '▶ Preview'; }
+    (step) => highlightPianoRollStep('melody-pianoroll', step),
+    () => { if (btn) btn.textContent = '▶ Preview'; clearPianoRollHighlight('melody-pianoroll'); }
   );
 }
 
@@ -3278,7 +3420,9 @@ async function exportDrumSplitPack() {
 
   const bpm  = state.scene.bpm;
   const totalMins = parseFloat(state.scene.length) || 6;
-  const bars = Math.max(4, Math.round((totalMins * bpm) / 4));
+  // Pattern bars = 2 (the actual loop length). Full track structure is handled by arrangement.
+  // Exporting the full 6 mins as MIDI would be mostly empty — export the loop pattern instead.
+  const bars = 2;
   const safe = `BFF_Drums_${bpm}bpm`;
 
   const drumRows = [
@@ -3302,8 +3446,7 @@ async function exportDrumSplitPack() {
     }
   });
 
-  // Also include the combined all-drums file
-  files.push({ name: `${safe}_ALL.mid`, bytes: buildDrumMidi(state.drums.pattern, bpm, bars) });
+  // ⬆ Split files above are the export. No combined ALL to avoid duplication.
 
   const zip = buildZip(files);
   const zipName = `${safe}_SplitPack.zip`;
@@ -3582,7 +3725,9 @@ async function exportFullMidiPack() {
   const bpm  = state.scene.bpm;
   const key  = state.scene.key;
   const totalMins = parseFloat(state.scene.length) || 6;
-  const bars = Math.max(4, Math.round((totalMins * bpm) / 4));
+  // Pattern bars = 2 (the actual loop length). Full track structure is handled by arrangement.
+  // Exporting the full 6 mins as MIDI would be mostly empty — export the loop pattern instead.
+  const bars = 2;
   const safe = `BFF_${key.replace('#','s')}_${bpm}bpm`;
   const files = [];
   const exported = [];
@@ -3601,8 +3746,7 @@ async function exportFullMidiPack() {
         exported.push(row.label);
       }
     });
-    // Combined drums too
-    files.push({ name: `${safe}_Drums_ALL.mid`, bytes: buildDrumMidi(state.drums.pattern, bpm, bars) });
+    // Split files are the export — no duplicate ALL file
   }
 
   // ── BASS ──
@@ -3728,11 +3872,20 @@ function initDragCards() {
       card.classList.add('dragging');
 
       if (isElectron()) {
-        // Tell main process to write temp file + start native OS drag
-        e.preventDefault(); // suppress browser drag, we use native
-        window.bff.midi.startDrag(midi.filename, Array.from(midi.bytes));
+        // Write file synchronously then start native drag
+        // We set a ghost drag image so the OS drag begins, then trigger startDrag
+        const ghostEl = document.createElement('div');
+        ghostEl.style.cssText = 'position:fixed;top:-999px;background:#c9a84c;padding:4px 8px;border-radius:4px;color:#000;font-size:11px;';
+        ghostEl.textContent = midi.filename;
+        document.body.appendChild(ghostEl);
+        e.dataTransfer.setDragImage(ghostEl, 0, 0);
+        e.dataTransfer.effectAllowed = 'copy';
+        e.dataTransfer.setData('text/uri-list', midi.filename);
+        setTimeout(() => {
+          document.body.removeChild(ghostEl);
+          window.bff.midi.startDrag(midi.filename, Array.from(midi.bytes));
+        }, 0);
       } else {
-        // Browser fallback: set drag data (won't open in Ableton but at least something happens)
         e.dataTransfer.effectAllowed = 'copy';
         e.dataTransfer.setData('text/plain', midi.filename);
       }

@@ -1,6 +1,6 @@
 {
   "name": "beatforge",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "BFF \u2014 Your Best Friend in Music Production",
   "main": "main.js",
   "scripts": {
