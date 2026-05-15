@@ -1298,60 +1298,54 @@ const BF_Audio = (() => {
 
     Tone.getTransport().bpm.value = bpm || 128;
 
-    const ticksPerStep = '16n'; // each step = 1/16 note
-    const synth = role==='bass' ? bassSynth : role==='pad' ? padSynth : melodySynth;
-
-    // Build event map: normalise {time,duration} OR {step,len} formats
+    // Normalise notes to {step, len, note, vel}
     const normNotes = notes.map(n => ({
       step: n.step !== undefined ? n.step : Math.round((n.time || 0)),
       len:  n.len  !== undefined ? n.len  : Math.max(1, Math.round(n.duration || 2)),
       note: n.note,
       vel:  n.vel || n.velocity || 90,
     }));
+
+    // Build step → notes lookup
     const stepMap = {};
     normNotes.forEach(n => {
       if (!stepMap[n.step]) stepMap[n.step] = [];
       stepMap[n.step].push(n);
     });
-    const maxStep = Math.max(...normNotes.map(n => n.step + n.len));
-    let currentStep = 0;
+
+    // Total length = last note end + 1 step of silence, snapped to bar boundary (16 steps)
+    const rawMax  = Math.max(...normNotes.map(n => n.step + n.len));
+    const maxStep = Math.ceil(rawMax / 16) * 16; // snap to bar
+    const stepsArr = Array.from({ length: maxStep }, (_, i) => i);
+
+    // Always loop — let the stop button end playback
+    // Transport loops over the exact bar range
+    Tone.getTransport().loop     = true;
+    Tone.getTransport().loopStart = 0;
+    Tone.getTransport().loopEnd  = `${maxStep * 16}i`; // in Tone "i" = ticks (PPQ=192 per 16n)
 
     playSeq = new Tone.Sequence((time, step) => {
-      if (step >= maxStep) {
-        Tone.getTransport().stop();
-        isPlaying = false;
-        if (onStop) setTimeout(onStop, 100);
-        return;
-      }
-      if (stepMap[step]) {
-        stepMap[step].forEach(n => {
-          try {
-            const midi = Math.max(21, Math.min(108, Math.round(n.note)));
-            const freq = Tone.Frequency(midi, 'midi').toFrequency();
-            const durSec = (60 / (Tone.getTransport().bpm.value || 128)) / 4 * Math.max(1, n.len || 1);
-            if (role === 'bass') {
-              if (bassSynth) bassSynth.triggerAttackRelease(freq, durSec, time, Math.min(1, (n.vel||90)/127));
-            } else if (role === 'pad') {
-              if (padSynth) padSynth.triggerAttackRelease(freq, durSec, time, Math.min(1, (n.vel||70)/127));
-            } else {
-              if (melodySynth) melodySynth.triggerAttackRelease(freq, durSec, time, Math.min(1, (n.vel||90)/127));
-            }
-          } catch(noteErr) {
-            console.warn('[BF_Audio] note trigger error (skipping note):', noteErr);
+      if (!stepMap[step]) return; // empty step — advance silently
+      stepMap[step].forEach(n => {
+        try {
+          const midi   = Math.max(21, Math.min(108, Math.round(n.note)));
+          const freq   = Tone.Frequency(midi, 'midi').toFrequency();
+          const stepSec = (60 / (Tone.getTransport().bpm.value || 128)) / 4;
+          const durSec  = stepSec * Math.max(1, n.len || 1) * 0.92; // tiny gap for articulation
+          if (role === 'bass') {
+            if (bassSynth) bassSynth.triggerAttackRelease(freq, durSec, time, Math.min(1, (n.vel||90)/127));
+          } else if (role === 'pad') {
+            if (padSynth) padSynth.triggerAttackRelease(freq, durSec, time, Math.min(1, (n.vel||70)/127));
+          } else {
+            if (melodySynth) melodySynth.triggerAttackRelease(freq, durSec, time, Math.min(1, (n.vel||90)/127));
           }
-        });
-      }
+        } catch(noteErr) {
+          console.warn('[BF_Audio] note trigger error (skipping):', noteErr);
+        }
+      });
       if (onStep) onStep(step);
-      currentStep = step;
-    }, [...Array(maxStep+1).keys()], ticksPerStep);
+    }, stepsArr, '16n');
 
-    const shouldLoop = (role === 'bass' || role === 'melody' || role === 'pad');
-    if (shouldLoop) {
-      playSeq.loop = true;
-      // loopEnd in seconds: maxStep 16th-notes at current BPM
-      const loopSec = maxStep * (60 / (bpm || 128)) / 4;
-      playSeq.loopEnd = loopSec;
-    }
     try {
       playSeq.start(0);
       Tone.getTransport().start();
@@ -1392,9 +1386,10 @@ const BF_Audio = (() => {
 
   // ── Stop everything ──
   function stopAll() {
-    if (playSeq) { playSeq.stop(); playSeq.dispose(); playSeq = null; }
-    Tone.getTransport().stop();
-    Tone.getTransport().cancel();
+    if (playSeq) { try { playSeq.stop(); } catch(e){} try { playSeq.dispose(); } catch(e){} playSeq = null; }
+    try { Tone.getTransport().stop(); } catch(e) {}
+    try { Tone.getTransport().cancel(); } catch(e) {}
+    try { Tone.getTransport().loop = false; } catch(e) {}
     isPlaying = false;
     if (melodySynth) try { melodySynth.releaseAll(); } catch(e){}
     if (padSynth)    try { padSynth.releaseAll(); }    catch(e){}
